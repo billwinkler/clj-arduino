@@ -2,9 +2,23 @@
 
 A Clojure library designed to ... well, that part is up to you.
 
+See https://circuits4you.com/2016/11/25/hx711-arduino-load-cell/
+
 ## Usage
 
 FIXME
+
+## Calibration
+
+Compute the slope: m = (y - b)/x
+
+- y is the reference calibration weight
+- x is the raw value from the scale
+- b is the tare (offset) value
+
+``` clojure
+
+```
 
 ## License
 
