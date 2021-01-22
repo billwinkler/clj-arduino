@@ -33,9 +33,29 @@
   (float (/ (- reading tare) ref-weight)))
 
 (defn running?
-  "test current state"
+  "true while readings are being taken"
   []
   (not= :done (:state @state-machine)))
+
+(defn trend-analytics
+  "Compare first half measurements to most recent half"
+  []
+  (let [noise 50 ;; threshold for random variance 
+        n (int (/ (:queue-depth @parameters) 2))
+        rng (map - @readings (rest @readings))
+        segs (partition-all n @readings)
+        [t0 t1] (map avg segs)
+        dir (cond
+              (> noise (Math/abs (float (- t1 t0)))) :level
+              (> t1 t0) :up
+              :else :down)]
+    (hash-map :t0 t0 :t1 t1 :segs segs :dir dir
+              :bias (reduce + rng) :mnv (apply min rng) :mxv (apply max rng))))
+
+(defn stable?
+  "true when last 10 measurements are within +/- some tbd percent"
+  [])
+
 
 (defn printer
   [in]
@@ -54,7 +74,22 @@
 
 (defn q-handler
   [in]
-  (go (while (running?) (push! (<! in)) (println "qh>" (peek @readings)))))
+  (let [out (chan)]
+    (go (while (running?)
+          (let [reading (<! in)]
+            (push! reading)
+            (println "qh>" @readings)
+            (a/put! out reading))))
+    out))
+
+(defn analytics-handler
+  [in]
+  (let [out (chan)]
+    (go (while (running?)
+          (let [reading (<! in)]
+            (println "ah>" (dissoc (trend-analytics) :segs))
+            (a/put! out reading))))
+    out))
 
 (defn reading-handler
   "decode the next n incoming readings and then quit"
@@ -160,7 +195,8 @@
   (let [board (arduino :firmata (arduino-port) :msg-callback (message-handler n))]
     (do
       (-> (printer (:out @message-channels))
-          (q-handler))
+          (q-handler)
+          (analytics-handler))
       (add-watch state-machine :state-change-alert (state-change-alert board))
       (swap! message-channels assoc-in [:board] board))
     nil))
