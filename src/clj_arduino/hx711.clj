@@ -1,7 +1,11 @@
 (ns clj-arduino.hx711
   (:use :reload-all clj-arduino.core)
   (:use :reload-all clodiuno.core)
-  (:use :reload-all clodiuno.firmata))
+  (:use :reload-all clodiuno.firmata)
+  (:require [clojure.core.async
+             :as a
+             :refer [>! <! >!! <!! go chan buffer close! thread
+                     alts! alts!! timeout]]))
 
 
 (defn- avg
@@ -19,6 +23,40 @@
   "compute the measurement scale"
   [ref-weight tare reading]
   (float (/ (- reading tare) ref-weight)))
+
+(defn reading-handler
+  "role is to do something with the next n incoming readings"
+  [n]
+  (let [in (chan)
+        out (chan)]
+    (go (loop [mc n] ;; message count
+          (if (> mc 0)
+            (let [msg (<! in)]
+              (if (= 9999 msg)
+                (do (>! out (str "remaining: " mc))
+                    (recur mc))
+                (do (>! out (decode-msg msg))
+                    (recur (dec mc)))))
+            (do (close! in)
+                (close! out)))))
+    [in out]))
+
+(defn printer
+  [in]
+  (go (while true (println (<! in)))))
+
+(def message-channels (atom {}))
+
+(defn message-handler
+  "role is to push decoded incoming values onto a queue"
+  []
+  (let [[in out] (reading-handler 5)]
+    (reset! message-channels {:in in :out out})
+    (fn [msg]
+      (go (>! in msg))
+      (go (when-let [value (<!! out)] (println value))))))
+
+(def msg-callback (message-handler))
 
 (def msg-callback
   (let [debug false
