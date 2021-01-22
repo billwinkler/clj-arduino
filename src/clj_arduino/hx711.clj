@@ -49,16 +49,18 @@
   (go (while true (println (<! in)))))
 
 (def message-channels (atom {}))
+(def state-machine (atom {}))
 
 (defn message-handler
   "role is to push decoded incoming values onto a queue"
   []
   (let [[in out exit] (reading-handler 5)]
     (reset! message-channels {:in in :out out :exit exit})
+    (swap! state-machine assoc-in [:state] :begin)
     (fn [msg]
       (go (a/put! in msg)) ;; https://clojure.org/guides/core_async_go#_general_advice
       (go (when-let [value (<!! out)] (println value)))
-      (go (when-let [value (<!! exit)] (swap! message-channels assoc-in [:state] value))))))
+      (go (when-let [value (<!! exit)] (swap! state-machine assoc-in [:state] value))))))
 
 ;;(def msg-callback (message-handler))
 
@@ -128,29 +130,24 @@
         (condp = new
           :running (println "begin running")
           :done (do (println "exiting") (close board))
-          (println "just fyi.." old new))))))
+          (println "just fyi.." old "->" new))))))
 
 (defn start!
   "start running"
   []
   (let [board (arduino :firmata (arduino-port) :msg-callback (message-handler))]
-    (add-watch message-channels :state-change-alert (state-change-alert board))
-    board))
+    (swap! message-channels assoc-in [:board] board)
+    (add-watch state-machine :state-change-alert (state-change-alert board))))
 
 (defn stop!
   []
-  (swap! message-channels assoc-in [:state] :done))
+  (swap! state-machine assoc-in [:state] :done))
 
 (comment
   (start!)
   (stop!)
-  (remove-watch message-channels :state-change-alert)
-  (swap! message-channels assoc-in [:state] :done))
+  (remove-watch state-machine :state-change-alert)
+  (swap! state-machine assoc-in [:state] :done))
 
-(comment
-  (def board (arduino :firmata (arduino-port) :msg-callback (message-handler)))
-  (close board)
-
-  )
 
 
