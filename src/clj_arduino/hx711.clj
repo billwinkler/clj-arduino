@@ -7,8 +7,8 @@
              :refer [>! <! >!! <!! go chan buffer close! thread
                      alts! alts!! timeout]]))
 
-(def parameters (atom {:tare 0  ;; offset when scale is clear
-                       :calib 1 ;; calibration factor
+(def parameters (atom {:tare 268207711  ;; offset when scale is clear
+                       :calib 450 ;; calibration factor
                        :tare-threshold 268205000 ;; to determine if the scale is clear
                        :queue-depth 10}))
 (def message-channels (atom {}))
@@ -18,9 +18,9 @@
 
 (defn- avg
   "compute average of the rolling history"
-  [hist]
-  (if (zero? (count hist)) 0
-    (/ (reduce + hist) (count hist))))
+  [readings]
+  (if (zero? (count readings)) 0
+    (/ (reduce + readings) (count readings))))
 
 (defn- fmt-float 
   "truncate trailing digits"
@@ -56,6 +56,12 @@
   "true when last 10 measurements are within +/- some tbd percent"
   [])
 
+(defn measure
+  "average of last n readings"
+  ([] (measure 5))
+  ([n] (letfn [(scale [m] (/ (- m (:tare @parameters)) (:calib @parameters)) )]
+         (->> @readings reverse (take n) avg float
+              scale fmt-float read-string))))
 
 (defn printer
   [in]
@@ -87,9 +93,10 @@
   (let [out (chan)]
     (go (while (running?)
           (let [reading (<! in)]
-            (println "ah>" (dissoc (trend-analytics) :segs))
+            (println "ah>" (measure) (dissoc (trend-analytics) :segs))
             (a/put! out reading))))
     out))
+
 
 (defn reading-handler
   "decode the next n incoming readings and then quit"
