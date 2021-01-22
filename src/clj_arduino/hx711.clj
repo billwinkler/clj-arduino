@@ -7,6 +7,14 @@
              :refer [>! <! >!! <!! go chan buffer close! thread
                      alts! alts!! timeout]]))
 
+(def parameters (atom {:tare 0  ;; offset when scale is clear
+                       :calib 1 ;; calibration factor
+                       :tare-threshold 268205000 ;; to determine if the scale is clear
+                       :queue-depth 10}))
+(def message-channels (atom {}))
+(def state-machine (atom {:state :idle :scale :unknown}))
+(def readings (ref clojure.lang.PersistentQueue/EMPTY))
+
 
 (defn- avg
   "compute average of the rolling history"
@@ -24,43 +32,57 @@
   [ref-weight tare reading]
   (float (/ (- reading tare) ref-weight)))
 
+(defn running?
+  "test current state"
+  []
+  (not= :done (:state @state-machine)))
+
+(defn printer
+  [in]
+  (let [out (chan (a/sliding-buffer 10))]
+    (go (while (running?)
+          (let [reading (<! in)]
+            (println reading)
+            (a/put! out reading))))
+    out))
+
+(defn push!
+  "push an item onto the queue"
+  [item]
+  (when (= (:queue-depth @parameters) (count @readings)) (dosync (alter readings pop)))
+  (dosync (alter readings conj item)))
+
+(defn q-handler
+  [in]
+  (go (while (running?) (push! (<! in)) (println "qh>" (peek @readings)))))
+
 (defn reading-handler
   "decode the next n incoming readings and then quit"
   [n]
   (let [in (chan)
-        out (chan (a/sliding-buffer 10))
-        exit (chan)]
+        out (chan (a/dropping-buffer 10))]
     (go (loop [mc n] ;; message count
           (if (> mc 0)
             (let [msg (<! in)]
-              (if (= 9999 msg)
-                (do (>! out (str "remaining: " mc))
-                    (recur mc))
-                (do (>! out (decode-msg msg))
-                    (recur (dec mc)))))
-            (do (>! exit :done)
-                (close! in)
+              (do (>! out (decode-msg msg))
+                  (recur (dec mc))))
+            (do (close! in)
                 (close! out)
-                (close! exit)))))
-    [in out exit]))
+                (swap! state-machine assoc-in [:state] :done)))))
+    [in out]))
 
-(defn printer
-  [in]
-  (go (while true (println (<! in)))))
 
-(def message-channels (atom {}))
-(def state-machine (atom {}))
 
 (defn message-handler
   "role is to push decoded incoming values onto a queue"
-  []
-  (let [[in out exit] (reading-handler 5)]
-    (reset! message-channels {:in in :out out :exit exit})
+  [limit]
+  (let [[in out] (reading-handler limit)]
+    (reset! message-channels {:in in :out out})
     (swap! state-machine assoc-in [:state] :begin)
     (fn [msg]
       (go (a/put! in msg)) ;; https://clojure.org/guides/core_async_go#_general_advice
-      (go (when-let [value (<!! out)] (println value)))
-      (go (when-let [value (<!! exit)] (swap! state-machine assoc-in [:state] value))))))
+;;      (go (when-let [value (<!! out)] (println value)))
+      )))
 
 ;;(def msg-callback (message-handler))
 
@@ -134,17 +156,21 @@
 
 (defn start!
   "start running"
-  []
-  (let [board (arduino :firmata (arduino-port) :msg-callback (message-handler))]
-    (swap! message-channels assoc-in [:board] board)
-    (add-watch state-machine :state-change-alert (state-change-alert board))))
+  [n]
+  (let [board (arduino :firmata (arduino-port) :msg-callback (message-handler n))]
+    (do
+      (-> (printer (:out @message-channels))
+          (q-handler))
+      (add-watch state-machine :state-change-alert (state-change-alert board))
+      (swap! message-channels assoc-in [:board] board))
+    nil))
 
 (defn stop!
   []
   (swap! state-machine assoc-in [:state] :done))
 
 (comment
-  (start!)
+  (start! 20)
   (stop!)
   (remove-watch state-machine :state-change-alert)
   (swap! state-machine assoc-in [:state] :done))
