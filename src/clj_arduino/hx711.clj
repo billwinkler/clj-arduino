@@ -25,10 +25,11 @@
   (float (/ (- reading tare) ref-weight)))
 
 (defn reading-handler
-  "role is to do something with the next n incoming readings"
+  "decode the next n incoming readings and then quit"
   [n]
   (let [in (chan)
-        out (chan)]
+        out (chan (a/sliding-buffer 10))
+        exit (chan)]
     (go (loop [mc n] ;; message count
           (if (> mc 0)
             (let [msg (<! in)]
@@ -37,9 +38,11 @@
                     (recur mc))
                 (do (>! out (decode-msg msg))
                     (recur (dec mc)))))
-            (do (close! in)
-                (close! out)))))
-    [in out]))
+            (do (>! exit :done)
+                (close! in)
+                (close! out)
+                (close! exit)))))
+    [in out exit]))
 
 (defn printer
   [in]
@@ -50,15 +53,17 @@
 (defn message-handler
   "role is to push decoded incoming values onto a queue"
   []
-  (let [[in out] (reading-handler 5)]
-    (reset! message-channels {:in in :out out})
+  (let [[in out exit] (reading-handler 5)]
+    (reset! message-channels {:in in :out out :exit exit})
     (fn [msg]
-      (go (>! in msg))
-      (go (when-let [value (<!! out)] (println value))))))
+      (go (a/put! in msg)) ;; https://clojure.org/guides/core_async_go#_general_advice
+      (go (when-let [value (<!! out)] (println value)))
+      (go (when-let [value (<!! exit)] (swap! message-channels assoc-in [:state] value))))))
 
-(def msg-callback (message-handler))
+;;(def msg-callback (message-handler))
 
-(def msg-callback
+
+#_(def msg-callback
   (let [debug false
         qd 15  ;; queue depth for averaging tare value
         ci 100 ;; calibration interval
@@ -111,8 +116,39 @@
 
         (when (and debug (zero? (mod @n 10))) (println @n @state @weight))))))
 
+(defn state-change-alert
+  "a var watcher to detect shutdown event"
+  [board]
+  (fn 
+    [key watched old-state new-state]
+    (let [old (:state old-state)
+          new (:state new-state)]
+      (println key ":" old "->" new)
+      (when (not= old new)
+        (condp = new
+          :running (println "begin running")
+          :done (do (println "exiting") (close board))
+          (println "just fyi.." old new))))))
+
+(defn start!
+  "start running"
+  []
+  (let [board (arduino :firmata (arduino-port) :msg-callback (message-handler))]
+    (add-watch message-channels :state-change-alert (state-change-alert board))
+    board))
+
+(defn stop!
+  []
+  (swap! message-channels assoc-in [:state] :done))
+
 (comment
-  (def board (arduino :firmata (arduino-port) :msg-callback msg-callback))
+  (start!)
+  (stop!)
+  (remove-watch message-channels :state-change-alert)
+  (swap! message-channels assoc-in [:state] :done))
+
+(comment
+  (def board (arduino :firmata (arduino-port) :msg-callback (message-handler)))
   (close board)
 
   )
