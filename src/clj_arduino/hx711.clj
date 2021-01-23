@@ -149,7 +149,7 @@
           (let [reading (<! in)
                 st (-> (trend-analytics) :dir)
                 m (if (= :level st) (measure) nil)]
-            (when (and m (not= m @lst) (and (< 0.2 (Math/abs (- m @lst)))))
+            (when (and m (not= m @lst) (and (< 0.15 (Math/abs (- m @lst)))))
               (reset! lst m)
               (println "mh>" m))
             (a/put! out reading))))
@@ -200,7 +200,7 @@
   (swap! state-machine assoc-in [:state] :done))
 
 (comment
-  (start! 200)
+  (start! 300)
   (tare!)
   (calibrate!)
   (set-queue-depth! 10)
