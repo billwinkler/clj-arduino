@@ -2,28 +2,17 @@
 
 An Ardunio prototyping library. 
 
-
-See https://circuits4you.com/2016/11/25/hx711-arduino-load-cell/
-
 ## Usage
 
-FIXME
+See [HX711](doc/hx711.md) docs for an example.
 
-## Calibration
 
-Compute the slope: m = (y - b)/x
 
-- y is the reference calibration weight
-- x is the raw value from the scale
-- b is the tare (offset) value
-
-``` clojure
-
-```
+[hx711.md]: http://www.eclipse.org/legal/epl-2.0.
 
 ## License
 
-Copyright © 2021 FIXME
+Copyright © 2021 Bill Winkler
 
 This program and the accompanying materials are made available under the
 terms of the Eclipse Public License 2.0 which is available at
