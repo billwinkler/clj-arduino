@@ -143,11 +143,15 @@
 
 (defn measurement-handler
   [in]
-  (let [out (chan)]
+  (let [out (chan)
+        lst (atom 0)]
     (go (while (running?)
           (let [reading (<! in)
-                st (-> (trend-analytics) :dir)]
-            (when (= :level st) (println "mh>" (measure)))
+                st (-> (trend-analytics) :dir)
+                m (if (= :level st) (measure) nil)]
+            (when (and m (not= m @lst) (and (< 0.2 (Math/abs (- m @lst)))))
+              (reset! lst m)
+              (println "mh>" m))
             (a/put! out reading))))
     out))
 
