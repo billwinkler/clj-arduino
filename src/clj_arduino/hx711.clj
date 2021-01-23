@@ -29,7 +29,6 @@
   [f]
   (format "%.1f" (float f)))
 
-
 (defn running?
   "true while readings are being taken"
   []
@@ -123,11 +122,9 @@
                 an (if (you-need-more-than-one-measurement-for-this-to-work)
                      (trend-analytics)
                      {})]
-;;            (println "ah>" (measure) (dissoc (trend-analytics) :segs))
-            (println "ah>" (measure) (:dir an) :bias (:bias an) [(:mnv an) (:mxv an)])
+            ;;(println "ah>" (measure) (:dir an) :bias (:bias an) [(:mnv an) (:mxv an)])
             (a/put! out reading))))
     out))
-
 
 (defn reading-handler
   "decode the next n incoming readings and then quit"
@@ -144,6 +141,15 @@
                 (swap! state-machine assoc-in [:state] :done)))))
     [in out]))
 
+(defn measurement-handler
+  [in]
+  (let [out (chan)]
+    (go (while (running?)
+          (let [reading (<! in)
+                st (-> (trend-analytics) :dir)]
+            (when (= :level st) (println "mh>" (measure)))
+            (a/put! out reading))))
+    out))
 
 
 (defn message-handler
@@ -234,7 +240,8 @@
     (do
       (-> (printer (:out @message-channels))
           (q-handler)
-          (analytics-handler))
+          (analytics-handler)
+          (measurement-handler))
       (add-watch state-machine :state-change-alert (state-change-alert board))
       (swap! message-channels assoc-in [:board] board))
     nil))
