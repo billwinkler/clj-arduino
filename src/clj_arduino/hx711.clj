@@ -10,11 +10,13 @@
 (def parameters (atom {:tare 268207711  ;; offset when scale is clear
                        :calib 450 ;; calibration factor
                        :tare-threshold 268205000 ;; to determine if the scale is clear
-                       :queue-depth 10}))
+                       :queue-depth 10
+                       :debug false}))
 (def message-channels (atom {}))
 (def state-machine (atom {:state :idle :scale :unknown}))
 (def readings (ref clojure.lang.PersistentQueue/EMPTY))
 
+(type readings)
 
 (defn- avg
   "compute average of the rolling history"
@@ -27,30 +29,34 @@
   [f]
   (format "%.1f" (float f)))
 
-(defn calibration-factor
-  "compute the measurement scale"
-  [ref-weight tare reading]
-  (float (/ (- reading tare) ref-weight)))
 
 (defn running?
   "true while readings are being taken"
   []
   (not= :done (:state @state-machine)))
 
+(defn you-need-more-than-one-measurement-for-this-to-work
+  []
+  (> (count @readings) 1))
+
 (defn trend-analytics
   "Compare first half measurements to most recent half"
   []
+  {:pre [(you-need-more-than-one-measurement-for-this-to-work)]}
   (let [noise 50 ;; threshold for random variance 
         n (int (/ (:queue-depth @parameters) 2))
         rng (map - @readings (rest @readings))
+        mnv (apply min rng)
+        mxv (apply max rng)
         segs (partition-all n @readings)
         [t0 t1] (map avg segs)
         dir (cond
+              (or (< mnv -80) (> mxv 80)) :noise
               (> noise (Math/abs (float (- t1 t0)))) :level
               (> t1 t0) :up
               :else :down)]
     (hash-map :t0 t0 :t1 t1 :segs segs :dir dir
-              :bias (reduce + rng) :mnv (apply min rng) :mxv (apply max rng))))
+              :bias (reduce + rng) :mnv mnv :mxv mxv)))
 
 (defn stable?
   "true when last 10 measurements are within +/- some tbd percent"
@@ -63,12 +69,32 @@
          (->> @readings reverse (take n) avg float
               scale fmt-float read-string))))
 
+(defn tare!
+  "reset the tare value"
+  [] 
+  (let [tare (->> @readings avg float)]
+    (:tare (swap! parameters assoc-in [:tare] tare))))
+
+(defn calibrate!
+  "compute the measurement scale"
+  ([] (calibrate! 25))
+  ([ref-weight]
+   (let [reading (:t1 (trend-analytics))
+         scale (float (/ (- reading (:tare @parameters)) ref-weight))]
+     (:calib (swap! parameters assoc-in [:calib] scale)))))
+
+(defn set-queue-depth!
+  "set a new queue-depth"
+  [size]
+  (:queue-depth (swap! parameters assoc-in [:queue-depth] size)))
+
+
 (defn printer
   [in]
   (let [out (chan (a/sliding-buffer 10))]
     (go (while (running?)
           (let [reading (<! in)]
-            (println reading)
+            (when (:debug parameters) (println reading))
             (a/put! out reading))))
     out))
 
@@ -84,7 +110,7 @@
     (go (while (running?)
           (let [reading (<! in)]
             (push! reading)
-            (println "qh>" @readings)
+            (when (:debug parameters) (println "qh>" @readings))
             (a/put! out reading))))
     out))
 
@@ -92,8 +118,13 @@
   [in]
   (let [out (chan)]
     (go (while (running?)
-          (let [reading (<! in)]
-            (println "ah>" (measure) (dissoc (trend-analytics) :segs))
+          (let [reading (<! in)
+                ;; this verbose function name is so that exception messages will be more clear
+                an (if (you-need-more-than-one-measurement-for-this-to-work)
+                     (trend-analytics)
+                     {})]
+;;            (println "ah>" (measure) (dissoc (trend-analytics) :segs))
+            (println "ah>" (measure) (:dir an) :bias (:bias an) [(:mnv an) (:mxv an)])
             (a/put! out reading))))
     out))
 
@@ -213,7 +244,10 @@
   (swap! state-machine assoc-in [:state] :done))
 
 (comment
-  (start! 20)
+  (start! 200)
+  (tare!)
+  (calibrate!)
+  (set-queue-depth! 10)
   (stop!)
   (remove-watch state-machine :state-change-alert)
   (swap! state-machine assoc-in [:state] :done))
