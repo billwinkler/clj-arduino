@@ -2,10 +2,20 @@
 
 An Ardunio prototyping library. 
 
+
+To install, add the following to your `project.clj`.
+
+``` clojure
+[clj-arduino "0.1.2-SNAPSHOT"]
+```
+
 ## Usage
 
-See [HX711](doc/hx711.md) docs for an example.
+See `resources/examples`, [HX711](doc/hx711.md) docs and corresponding [scale](resources/examples/scale.clj) example.
 
+## Credits
+
+This builds upon [Nurullah Akkaya's](https://github.com/nakkaya/clodiuno) cloduino library.
 
 
 [hx711.md]: http://www.eclipse.org/legal/epl-2.0.

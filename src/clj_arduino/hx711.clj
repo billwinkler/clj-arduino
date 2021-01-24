@@ -11,7 +11,7 @@
                        :queue-depth 10
                        :noise-threshold 50 ;; see docs
                        :noise-level 80 
-                       :debug true}))
+                       :debug false}))
 (def message-channels (atom {}))
 (def state-machine (atom {:state :idle :scale :unknown}))
 (def queue (ref clojure.lang.PersistentQueue/EMPTY)) ;; measurements
@@ -45,6 +45,16 @@
   "true while readings are being taken"
   []
   (not= :done (:state @state-machine)))
+
+(defn debug!
+  "Toggle the debug flag"
+  []
+  (:debug (swap! parameters update-in [:debug] not)))
+
+(defn debug?
+  "test debug flag"
+  []
+  (:debug @parameters))
 
 (defn trend-analytics
   "Compare first half measurements to most recent half"
@@ -100,7 +110,7 @@
   (let [out (chan (a/sliding-buffer 10))]
     (go (while (running?)
           (when-let [reading (<! in)]
-            (when (:debug @parameters) (println reading))
+            (when (debug?) (println reading))
             (a/put! out reading))))
     out))
 
@@ -116,7 +126,7 @@
     (go (while (running?)
           (let [reading (<! in)]
             (push! reading)
-            (when (:debug @parameters) (println "qh>" @queue))
+            (when (debug?) (println "qh>" @queue))
             (a/put! out reading))))
     out))
 
@@ -126,7 +136,7 @@
     (go (while (running?)
           (let [reading (<! in)
                 an (trend-analytics)]
-            (when (:debug @parameters)
+            (when (debug?)
               (println "ah>" (measure) (:dir an) :bias (:bias an) [(:mnv an) (:mxv an)]))
             (a/put! out reading))))
     out))
@@ -158,9 +168,18 @@
               (when (and m (not= m @lst) (and (< 0.15 (Math/abs (- m @lst)))))
                 (reset! lst m)
                 (a/put! *channel* {:weight m :raw reading})
-                (println "mh>" m))
+                (when (debug?) (println "mh>" m)))
               (a/put! out reading)))))
     out))
+
+(defn no-op
+  "intent is a method to remove handler from the pipeline
+  by swapping a no-op handler in its place"
+  [in]
+  (let [out (chan)]
+    (go (while (running?)
+          (let [msg (<! in)]
+            (a/put! out msg))))))
 
 
 (defn message-handler
@@ -181,12 +200,11 @@
     [key watched old-state new-state]
     (let [old (:state old-state)
           new (:state new-state)]
-      (println key ":" old "->" new)
       (when (not= old new)
         (condp = new
           :running (println "begin running")
           :done (do (println "exiting") (close board))
-          (println "just fyi.." old "->" new))))))
+          (println "state change:" old "->" new))))))
 
 (defn start!
   "start running"
@@ -200,6 +218,8 @@
       (add-watch state-machine :state-change-alert (state-change-alert board))
       (swap! message-channels assoc-in [:board] board))
     nil))
+
+
 
 (defn stop!
   []
