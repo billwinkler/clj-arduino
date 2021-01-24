@@ -30,7 +30,7 @@
   ([] (seq @queue))
   ([n] (take n (queue))))
 
-(defn- avg
+(defn avg
   "compute average of the rolling history"
   [readings]
   (if (zero? (count readings)) 0
@@ -52,7 +52,7 @@
   (let [noise (:noise-threshold @parameters) ;; threshold for random variance
         nl (:noise-level @parameters) ;; threshold for random variance 
         n (int (/ (:queue-depth @parameters) 2))
-        rng (map - (readings) (rest (readings)))
+        rng (map - (rest (readings)) (readings))
         mnv (if (empty? rng) 0 (apply min rng))
         mxv (if (empty? rng) 0 (apply max rng))
         segs (partition-all n (readings))
@@ -218,7 +218,5 @@
 
   (go (while (running?)
         (println "ch" (<!! *channel*))))
-
-
 
   )
