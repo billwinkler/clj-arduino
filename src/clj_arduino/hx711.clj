@@ -4,25 +4,28 @@
   (:use :reload-all clodiuno.firmata)
   (:require [clojure.core.async
              :as a
-             :refer [>! <! >!! <!! go chan alts!! close! timeout]]))
+             :refer [>! <! >!! <!! go chan alts!! close! timeout pipeline]]))
 
-(def parameters (atom {:tare 268207711  ;; offset when scale is clear
-                       :calib 450 ;; calibration factor
+(def parameters (atom {:tare 268206576  ;; offset when scale is clear
+                       :calib 457.58 ;; calibration factor
                        :queue-depth 10
                        :noise-threshold 50 ;; see docs
                        :noise-level 80 
                        :debug false}))
+
 (def message-channels (atom {}))
 (def state-machine (atom {:state :idle :scale :unknown}))
 (def queue (ref clojure.lang.PersistentQueue/EMPTY)) ;; measurements
 
-(def ^:dynamic *channel* (chan (a/sliding-buffer 1)))
+(def scale> (chan (a/sliding-buffer 1)))
+(def readings> (chan (a/sliding-buffer 10)))
+(def kill> (chan))
 
 (defn get-next
   "try to pull a measurement off the measurement channel.
   return null if nothing is read in the next x msecs   "
   ([] (get-next 500))
-  ([msecs] (let [[reading _] (alts!! [*channel* (timeout msecs)])]
+  ([msecs] (let [[reading _] (alts!! [scale> (timeout msecs)])]
              (if reading reading {}))))
 
 (defn readings
@@ -75,10 +78,6 @@
     (hash-map :t0 t0 :t1 t1 :segs segs :dir dir
               :bias (reduce + rng) :mnv mnv :mxv mxv)))
 
-(defn stable?
-  "true when last 10 measurements are within +/- some tbd percent"
-  [])
-
 (defn measure
   "average of last n readings"
   ([] (measure 5))
@@ -104,94 +103,62 @@
   [size]
   (:queue-depth (swap! parameters assoc-in [:queue-depth] size)))
 
-
-(defn printer
-  [in]
-  (let [out (chan (a/sliding-buffer 10))]
-    (go (while (running?)
-          (when-let [reading (<! in)]
-            (when (debug?) (println reading))
-            (a/put! out reading))))
-    out))
-
 (defn push!
   "push an item onto the queue"
   [item]
   (when (= (:queue-depth @parameters) (count @queue)) (dosync (alter queue pop)))
   (dosync (alter queue conj item)))
 
-(defn q-handler
-  [in]
-  (let [out (chan)]
-    (go (while (running?)
-          (let [reading (<! in)]
-            (push! reading)
-            (when (debug?) (println "qh>" @queue))
-            (a/put! out reading))))
-    out))
+(defn queuer
+  [{:keys [raw] :as msg}]
+  (when-let [reading raw] (push! reading))
+  (when (debug?) (println "qh>" @queue))
+  msg)
 
-(defn analytics-handler
-  [in]
-  (let [out (chan)]
-    (go (while (running?)
-          (let [reading (<! in)
-                an (trend-analytics)]
-            (when (debug?)
-              (println "ah>" (measure) (:dir an) :bias (:bias an) [(:mnv an) (:mxv an)]))
-            (a/put! out reading))))
-    out))
+(defn analyzer
+  "apply trend-analytics to the incoming message"
+  [{:keys [raw] :as msg}]
+  (let [msg (merge msg (trend-analytics))]
+    (when (debug?)
+      (println "ah>" raw (:dir msg) :bias (:bias msg) [(:mnv msg) (:mxv msg)]))
+    msg))
 
-(Defn reading-handler
-  "decode the next n incoming readings and then quit"
-  [n]
-  (let [in (chan)
-        out (chan (a/dropping-buffer 10))]
-    (go (loop [mc n] ;; message count
-          (if (> mc 0)
-            (let [msg (<! in)]
-              (do (>! out (decode-msg msg))
-                  (recur (dec mc))))
-            (do (close! in)
-                (close! out)
-                (swap! state-machine assoc-in [:state] :done)))))
-    [in out]))
+(defn decoder
+  "take a 4 character sysex string, 
+  output in a map as the raw decoded integer value"
+  [sysex-string]
+  (hash-map :raw (decode-msg sysex-string)))
 
-(defn measurement-handler
-  [in]
-  (let [out (chan)
-        lst (atom 0)]
-    (go (while (running?)
-          (when (> (count (readings)) 1)
-            (let [reading (<! in)
-                  st (-> (trend-analytics) :dir)
-                  m (if (= :stable st) (measure) nil)]
-              (when (and m (not= m @lst) (and (< 0.15 (Math/abs (- m @lst)))))
-                (reset! lst m)
-                (a/put! *channel* {:weight m :raw reading})
-                (when (debug?) (println "mh>" m)))
-              (a/put! out reading)))))
-    out))
+(defn de-dupper
+  "filter out readings that are essentially the same as the last reading"
+  ([] (de-dupper 500))
+  ([delta]
+   (let [last-raw (atom 0)]
+     (fn [{:keys [raw] :as msg}]
+       (cond 
+         (nil? raw) msg ;; simply pass it along
+         (> delta (Math/abs (- raw @last-raw))) {} ;; ignore it
+         :else (do (reset! last-raw raw) msg))))))
 
-(defn no-op
-  "intent is a method to remove handler from the pipeline
-  by swapping a no-op handler in its place"
-  [in]
-  (let [out (chan)]
-    (go (while (running?)
-          (let [msg (<! in)]
-            (a/put! out msg))))))
+(defn weight-assessor
+  "compute weight value if stable trend"
+  [{:keys [raw dir] :as msg}]
+  (cond
+    (> 1 (count (readings))) msg ;; not enough readings yet
+    (nil? raw) msg ;; duplicate
+    (not= dir :stable) msg ;; pass it on if not yet stable
+    :else (assoc msg :weight (measure))))
 
+(defn trimmer
+  "prune down the measurement event size"
+  [msg]
+  (dissoc msg :segs))
 
-(defn message-handler
-  "role is to push decoded incoming values onto a queue"
-  [limit]
-  (let [[in out] (reading-handler limit)]
-    (reset! message-channels {:in in :out out})
-    (swap! state-machine assoc-in [:state] :begin)
-    (fn [msg]
-      ;; https://clojure.org/guides/core_async_go#_general_advice
-      (go (a/put! in msg)))))
-
+(defn printer
+  [{:keys [dir raw weight] :as msg}]
+  (when (not-empty msg)
+    (println dir raw weight))
+  msg)
 
 (defn state-change-alert
   "a var watcher to detect shutdown event"
@@ -206,19 +173,30 @@
           :done (do (println "exiting") (close board))
           (println "state change:" old "->" new))))))
 
+(defn msg-handler
+  "initialize callback function"
+  []
+  (swap! state-machine assoc-in [:state] :begin)
+  (fn [msg] (go (a/put! readings> msg))))
+
 (defn start!
   "start running"
-  [n]
-  (let [board (arduino :firmata (arduino-port) :msg-callback (message-handler n))]
+  []
+  (let [board (arduino :firmata (arduino-port) :msg-callback (msg-handler))
+        xform (comp
+               (map decoder)
+               (map queuer)
+               (map analyzer)
+               (map (de-dupper 50))
+               (map weight-assessor)
+               (filter (fn [{:keys [raw dir]}] (= dir :stable)))
+               (map printer)
+               (map trimmer))
+        _ (pipeline 1 scale> xform readings>)] 
     (do
-      (-> (printer (:out @message-channels))
-          (q-handler)
-          (analytics-handler)
-          (measurement-handler))
       (add-watch state-machine :state-change-alert (state-change-alert board))
       (swap! message-channels assoc-in [:board] board))
-    nil))
-
+    "ok"))
 
 
 (defn stop!
@@ -226,17 +204,21 @@
   (swap! state-machine assoc-in [:state] :done))
 
 (comment
-  (start! 300)
+  (start!)
+  (stop!)
+  (close! readings>)
+  (close! scale>)
   (get-next)
   (<!! channel)
   (tare!)
   (calibrate!)
   (set-queue-depth! 10)
-  (stop!)
+  (a/poll! readings>)
+  (a/poll! scale>)
+  (debug!)
+  
   (remove-watch state-machine :state-change-alert)
   (swap! state-machine assoc-in [:state] :done)
 
-  (go (while (running?)
-        (println "ch" (<!! *channel*))))
 
   )
