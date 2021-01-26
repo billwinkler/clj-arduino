@@ -141,7 +141,7 @@
             (a/put! out reading))))
     out))
 
-(defn reading-handler
+(Defn reading-handler
   "decode the next n incoming readings and then quit"
   [n]
   (let [in (chan)
