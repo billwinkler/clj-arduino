@@ -107,10 +107,14 @@
 (deftest calibrate-test
   (testing "resetting scale factor"
     (do (empty!)
-        (tare! 90)
-        (push! 100))
-    (is (= -100.0 (calibrate! 1)) "(/ (- reading tare 1")
-    (is (= 100.0 (do (dotimes [n 10] (push! 100)) (calibrate! 1))))))
+        (tare! 100)
+        (push! 200))
+    (is (= 0 (:t1 (trend-analytics))) "must have 2 readings to calibrate") 
+    (is (= -100.0 (calibrate! 1)) "(/ (- reading tare 1") ;; not enough readings for t0
+    (is (= 100.0 (do (dotimes [n 10] (push! 200)) (calibrate! 1))))
+    (is (= 200 (do (push! 200) (:t1 (trend-analytics)))) "after 2 readings") 
+    (is (= 100.0 (do (dotimes [n 10] (push! 200)) (calibrate! 1))))
+    (is (= 200 (:t1 (trend-analytics))) "after 12 readings")))
 
 (deftest measure-test
   (testing "average of last n readings"
