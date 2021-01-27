@@ -11,7 +11,7 @@
                        :queue-depth 10
                        :noise-threshold 50 ;; see docs
                        :noise-level 80 
-                       :debug false}))
+                       :debug #{}}))
 
 (def message-channels (atom {}))
 (def state-machine (atom {:state :idle :scale :unknown}))
@@ -50,14 +50,13 @@
   (not= :done (:state @state-machine)))
 
 (defn debug!
-  "Toggle the debug flag"
-  []
-  (:debug (swap! parameters update-in [:debug] not)))
+  "Clear debug flags by default, or set them to some elements"
+  [& flags] (:debug (swap! parameters assoc-in [:debug] (set flags))))
 
 (defn debug?
-  "test debug flag"
-  []
-  (:debug @parameters))
+  "test debug settings"
+  [some-key]
+  (contains? (:debug @parameters) some-key))
 
 (defn trend-analytics
   "Compare first half measurements to most recent half"
@@ -110,18 +109,28 @@
   (dosync (alter queue conj item)))
 
 (defn queuer
+  "push the next reading onto the queue"
   [{:keys [raw] :as msg}]
   (when-let [reading raw] (push! reading))
-  (when (debug?) (println "qh>" @queue))
+  (when (debug? :queuer) (println "qh>" @queue))
   msg)
 
 (defn analyzer
   "apply trend-analytics to the incoming message"
   [{:keys [raw] :as msg}]
   (let [msg (merge msg (trend-analytics))]
-    (when (debug?)
-      (println "ah>" raw (:dir msg) :bias (:bias msg) [(:mnv msg) (:mxv msg)]))
+    (when (debug? :analyzer)
+      (let [ {:keys [t1 t0]} msg
+            fmt (fnil fmt-float 0.0)
+            t1 (fmt t1)
+            t0 (fmt t0)
+            delta (- (read-string t1) (read-string t0))]
+        (println "ah>" raw (:dir msg) :bias (:bias msg) 
+                 :mn-mx [(:mnv msg) (:mxv msg)]
+                 :t0-t1 [t0 t1]
+                 :delta delta)))
     msg))
+
 
 (defn decoder
   "take a 4 character sysex string, 
@@ -134,11 +143,17 @@
   ([] (de-dupper 500))
   ([delta]
    (let [last-raw (atom 0)]
-     (fn [{:keys [raw] :as msg}]
-       (cond 
-         (nil? raw) msg ;; simply pass it along
-         (> delta (Math/abs (- raw @last-raw))) {} ;; ignore it
-         :else (do (reset! last-raw raw) msg))))))
+     (fn [{:keys [raw weight] :as msg}]
+       (let [diff (Math/abs (- raw @last-raw))]
+         (when (debug? :de-dupper)
+           (println "dd>" :from @last-raw :to raw
+                    :delta [diff ":" delta]
+                    (if (< diff delta) :drop :keep)
+                    :weight weight))
+         (cond 
+           (nil? raw) msg    ;; simply pass it along
+           (> delta diff) {} ;; ignore it
+           :else (do (reset! last-raw raw) msg)))))))
 
 (defn weight-assessor
   "compute weight value if stable trend"
@@ -155,6 +170,7 @@
   (dissoc msg :segs))
 
 (defn printer
+  "print some elements of the reading payload"
   [{:keys [dir raw weight] :as msg}]
   (when (not-empty msg)
     (println dir raw weight))
@@ -174,21 +190,22 @@
           (println "state change:" old "->" new))))))
 
 (defn msg-handler
-  "initialize callback function"
+  "generate a callback function; set state machine to :init "
   []
-  (swap! state-machine assoc-in [:state] :begin)
+  (swap! state-machine assoc-in [:state] :init)
   (fn [msg] (go (a/put! readings> msg))))
 
 (defn start!
   "start running"
   []
   (let [board (arduino :firmata (arduino-port) :msg-callback (msg-handler))
+        _ (swap! state-machine assoc-in [:state] :running)
         xform (comp
                (map decoder)
                (map queuer)
                (map analyzer)
-               (map (de-dupper 50))
                (map weight-assessor)
+               (map (de-dupper 50))
                (filter (fn [{:keys [raw dir]}] (= dir :stable)))
                (map printer)
                (map trimmer))
@@ -198,8 +215,8 @@
       (swap! message-channels assoc-in [:board] board))
     "ok"))
 
-
 (defn stop!
+  "Change state machine state to done"
   []
   (swap! state-machine assoc-in [:state] :done))
 
@@ -216,6 +233,9 @@
   (a/poll! readings>)
   (a/poll! scale>)
   (debug!)
+  (debug! :queuer)
+  (debug! :de-dupper)
+  (debug! :analyzer)
   
   (remove-watch state-machine :state-change-alert)
   (swap! state-machine assoc-in [:state] :done)
