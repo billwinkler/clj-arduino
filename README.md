@@ -6,7 +6,7 @@ An Ardunio prototyping library.
 To install, add the following to your `project.clj`.
 
 ``` clojure
-[clj-arduino "0.1.2-SNAPSHOT"]
+[clj-arduino "0.1.3-SNAPSHOT"]
 ```
 
 ## Usage

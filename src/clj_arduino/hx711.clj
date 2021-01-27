@@ -11,10 +11,10 @@
                        :queue-depth 10
                        :noise-threshold 50 ;; see docs
                        :noise-level 80 
-                       :debug #{}}))
+                       :debug #{:printer}}))
 
 (def message-channels (atom {}))
-(def state-machine (atom {:state :idle :scale :unknown}))
+(def state-machine (atom {:state :idle}))
 (def queue (ref clojure.lang.PersistentQueue/EMPTY)) ;; measurements
 
 (def ^:private scale> (chan (a/sliding-buffer 1)))
@@ -172,7 +172,8 @@
 (defn printer
   "print some elements of the reading payload"
   [{:keys [dir raw weight] :as msg}]
-  (when (not-empty msg)
+  (when (and (not-empty msg)
+             (debug? :printer))
     (println dir raw weight))
   msg)
 
@@ -233,6 +234,7 @@
   (a/poll! readings>)
   (a/poll! scale>)
   (debug!)
+  (debug! :printer)
   (debug! :queuer)
   (debug! :de-dupper)
   (debug! :analyzer)

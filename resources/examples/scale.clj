@@ -23,13 +23,14 @@
   (go (while (running?) (-> (get-next) (pecan-handler)))))
 
 (comment
-  (start! 1000)
+  (start!)
   (tare!)
   (calibrate!)
   (process!)
   (get-next)
   (stop!)
   (debug!)
+  (debug! :printer)
   )
 
 
