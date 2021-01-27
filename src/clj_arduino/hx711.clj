@@ -17,9 +17,9 @@
 (def state-machine (atom {:state :idle :scale :unknown}))
 (def queue (ref clojure.lang.PersistentQueue/EMPTY)) ;; measurements
 
-(def scale> (chan (a/sliding-buffer 1)))
-(def readings> (chan (a/sliding-buffer 10)))
-(def kill> (chan))
+(def ^:private scale> (chan (a/sliding-buffer 1)))
+(def ^:private readings> (chan (a/sliding-buffer 10)))
+(def ^:private kill> (chan))
 
 (defn get-next
   "try to pull a measurement off the measurement channel.
