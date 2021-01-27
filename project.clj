@@ -1,4 +1,4 @@
-(defproject clj-arduino "0.1.2-SNAPSHOT"
+(defproject clj-arduino "0.1.3-SNAPSHOT"
   :description "A Clojure Arduino prototyping library"
   :url "https://com.github.billwinkler/clj-arduino"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
