@@ -71,3 +71,12 @@ void receiveEvent(int howMany)
   Serial.println(x);         // print the integer
 }
 ```
+## The Test
+
+1. Connect USB to Master and upload the master sketch
+2. Move USB connection to Slave and upload slave
+3. Open the Serial Monitor at 9600 baud
+
+You should see the transmission.
+
+
