@@ -1,3 +1,10 @@
+## I2C Initial Test
+
+This demonstrates I2C communication between two Arduinos.  The Master
+sends messages to the Slave.  The Slave prints each message to it's
+serial output stream.
+
+
 ## I2C Wiring
 
 ![](images/i2c-experiment.png)
