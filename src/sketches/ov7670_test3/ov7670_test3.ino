@@ -38,19 +38,25 @@ volatile byte sync = 0;
 volatile byte flag = 0;
 volatile byte data = 0;
 volatile byte valid = 0;
-uint8_t buf[640];
-uint8_t*b=buf;
-uint8_t*b2=buf;
+uint8_t buf1[128];
+uint8_t buf2[128];
+uint8_t*b=buf1;
+uint8_t*b2=buf1;
 
-uint8_t*b7;   // a pointer to an unsigned byte type
+uint8_t*b7;       // a pointer to an unsigned byte type
+uint8_t*last_b7;  // buffer read/write indicator
 
 void pclk() {
   // reset pixel clock while vsync is high
-  buf[1]=2;
+  buf1[1]=2;
   if (PIND&8) {
     pcnt = 0;
-//    *b=buf;
-    b7 = &buf[0]; // b7 contains the address of buf    
+    if (last_b7 == &buf1[0]) {
+      b7 = &buf2[0];
+    } else {
+      b7 = &buf1[0];
+    }
+    last_b7 = b7;   
   }
   *b7 =(PINC&15)|(PIND&240);
   //flag = flag ^ 1;
@@ -58,10 +64,15 @@ void pclk() {
   //valid = PIND&4; // when low
   //++pcnt;
   //++*b;
-  if (b7 < &buf[639]) {
+  if ((b7 - last_b7) < sizeof(buf1)) {
     ++b7; 
   } else {
-    b7 = &buf[0]; // b7 contains the address of buf    
+    if (last_b7 == &buf1[0]) {
+      b7 = &buf2[0];
+    } else {
+      b7 = &buf1[0];
+    }
+    last_b7 = b7; 
   }
 }
 
@@ -93,30 +104,16 @@ void setup() {
 
   Serial.begin(115200);
 
-  int *p;       // declare a pointer to an int data type
-  int i = 5;
-  int result = 0;
-  p = &i;       // now 'p' contains the address of 'i'
-  result = *p;  // 'result' gets the value at the address pointed by 'p'
-                // i.e., it gets the value of 'i' which is 5
-
-  Serial.print( "&p ");
-  Serial.print((long)&p);
-  Serial.print( " &i ");
-  Serial.print((long)&i);
-  Serial.print( " *p ");
-  Serial.println(*p);                 
-
-  uint8_t*b4=buf;
-  for (int x = 0; x < sizeof(buf) / sizeof(buf[0]); x++) {
+  uint8_t*b4=buf1;
+  for (int x = 0; x < sizeof(buf1) / sizeof(buf1[0]); x++) {
     *b4++ = 0;
   }
 
   uint8_t*b6;   // a pointer to an unsigned byte type
-  b6 = &buf[0];   // b6 contains the address of buf
+  b6 = &buf1[0];   // b6 contains the address of buf
 
   uint8_t*b5;     // a pointer to an unsigned byte type
-  b5 = &buf[100]; // b5 contains the address of buf[100]
+  b5 = &buf1[100]; // b5 contains the address of buf[100]
 
  /*
   for (int x = 0; x < 270; x++) {
@@ -161,7 +158,9 @@ void setup() {
 
   const byte pcklPin = 2;
   const byte vsyncPin = 3;
-  b7 = &buf[0];
+  b7 = &buf1[0];
+  last_b7 = b7;
+
   
   pinMode(pcklPin, INPUT_PULLUP);
   pinMode(vsyncPin, INPUT_PULLUP);
@@ -169,15 +168,11 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, FALLING);
   
   uint8_t*b8;   // a pointer to an unsigned byte type
-  b8 = &buf[3];   // b6 contains the address of buf
+  b8 = &buf1[3];   // b6 contains the address of buf
   *b8 = 3;
-
-
-
 }
 
 void loop() {
-  Serial.println("ready");
   delay(3000);
   /*
   while(!(PIND&8));//wait for high
@@ -199,10 +194,19 @@ void loop() {
   Serial.print( " *b-*b2 ");
   Serial.println( &b-&b2, DEC);  
   */
+  if (last_b7 == &buf2[0]) {
+      Serial.print("buf1 ");
+    } else {
+      Serial.print("buf2 "); 
+    }
 
-  for (int x = 0; x < sizeof(buf) / sizeof(buf[0]); x++) {
-    Serial.print(buf[x], HEX);
-  }  
+  for (int x = 0; x < sizeof(buf1) / sizeof(buf1[0]); x++) {
+    if (last_b7 == &buf2[0]) {
+      Serial.print(buf1[x], HEX);
+    } else {
+      Serial.print(buf2[x], HEX); 
+    }
+  }
 
     Serial.println();
   //captureImg(640,480);
