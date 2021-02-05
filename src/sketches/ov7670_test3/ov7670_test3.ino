@@ -2,54 +2,48 @@
 uint16_t vcnt = 0;
 uint16_t pcnt = 0;
 uint16_t bcnt = 0;
+
+unsigned long t0;
+unsigned long dt;
+
 volatile byte sync = 0;
-volatile byte flag = 0;
-volatile byte data = 0;
-volatile byte valid = 0;
+
 uint8_t buf1[128];
 uint8_t buf2[128];
-uint8_t*b=buf1;
-uint8_t*b2=buf1;
 
-uint8_t*b7;       // a pointer to an unsigned byte type
-uint8_t*last_b7;  // buffer read/write indicator
+uint8_t*bp;       // a pointer to an unsigned byte type
+uint8_t*curr_bp;  // last buffer points to the indicator
+
+void vsync() {
+  sync ^= 1;
+  ++vcnt;
+  bcnt = 0;
+  if (curr_bp == &buf1[0]) {
+      bp = &buf2[0];
+   } else {
+      bp = &buf1[0];
+   }
+   curr_bp = bp;     
+}
 
 void pclk() {
-  // reset buffer pointer while vsync is high
-  if (PIND&8) {
-    ++vcnt;
-    bcnt = 0;
-    if (last_b7 == &buf1[0]) {
-      b7 = &buf2[0];
-    } else {
-      b7 = &buf1[0];
-    }
-    last_b7 = b7;   
-  }
   // write the data to the buffer
-  *b7 =(PINC&15)|(PIND&240);
+  *bp =(PINC&15)|(PIND&240);
 
-  if ((b7 - last_b7) < sizeof(buf1)) {
-    ++b7; 
+  if ((bp - curr_bp) < sizeof(buf1)) {
+    ++bp; 
   } else {
     // increment buffer counter
     ++bcnt;    
-    if (last_b7 == &buf1[0]) {
-      b7 = &buf2[0];
+    if (curr_bp == &buf1[0]) {
+      bp = &buf2[0];
     } else {
-      b7 = &buf1[0];
+      bp = &buf1[0];
     }
-    last_b7 = b7; 
+    curr_bp = bp; 
   }
 }
 
-void vsync() {
-  sync = sync ^ 1;
-  ++vcnt;
-  if (sync == 1) {
-    pcnt = 0;
-  }
-}
 
 
 void setup() {
@@ -84,19 +78,21 @@ void setup() {
 
   const byte pcklPin = 2;
   const byte vsyncPin = 3;
-  b7 = &buf1[0];
-  last_b7 = b7;
+  bp = &buf1[0];
+  curr_bp = bp;
 
   
   pinMode(pcklPin, INPUT_PULLUP);
   pinMode(vsyncPin, INPUT_PULLUP);
-//  attachInterrupt(digitalPinToInterrupt(vsyncPin), vsync, FALLING);
+  attachInterrupt(digitalPinToInterrupt(vsyncPin), vsync, FALLING);
   attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, FALLING);
 
 }
 
 void loop() {
   int lcnt = 0;
+
+  uint8_t*bp2,*bp3;
   
   while(vcnt % 100 == 0) {
     Serial.print("vcnt ");
@@ -105,23 +101,34 @@ void loop() {
     Serial.print(lcnt++);
     Serial.print(" bcnt ");
     Serial.print(bcnt);
-    if (last_b7 == &buf2[0]) {
+    if (curr_bp == &buf2[0]) {
+      bp2 = &buf1[0];
+      bp3 = (bp2+4);
+      *bp3 = 0xFF;
+      buf2[5] = 0xFF;
       Serial.print(" buf1 ");
     } else {
+      bp2 = &buf2[0];
+      bp3 = (bp2+4);
+      *bp3 = 0xFF;
+      buf1[5] = 0xFF;      
       Serial.print(" buf2 "); 
     }
 
-  for (int x = 0; x < 2; x++) {
-    if (last_b7 == &buf2[0]) {
+ for (int x = 0; x < 10; x++) {
+    if (curr_bp == &buf2[0]) {
       Serial.print(buf1[x], HEX);
+      Serial.print(" ");      
     } else {
-      Serial.print(buf2[x], HEX); 
+      Serial.print(buf2[x], HEX);
+      Serial.print(" ");
     }
-   }
+   }   
+
+ 
     Serial.println();
   }
-     
-
+    
 }
 
   
