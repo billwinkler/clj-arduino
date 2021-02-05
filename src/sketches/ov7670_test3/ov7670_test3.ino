@@ -15,11 +15,12 @@ unsigned long dt;
 
 volatile byte sync = 0;
 
-uint8_t buf1[128];
-uint8_t buf2[128];
+uint8_t buf1[64];
+uint8_t buf2[64];
+volatile int idx = 0;
 
-uint8_t*bp;       // a pointer to an unsigned byte type
-uint8_t*curr_bp;  // last buffer points to the indicator
+volatile uint8_t*bp;       // a pointer to an unsigned byte type
+volatile uint8_t*curr_bp;  // last buffer points to the indicator
 
 void timer () 
 {
@@ -48,6 +49,30 @@ void pclk ()
     return;
 
   // write the data to the buffer
+  if (write_to_1) {
+    buf1[idx++] = (PINC&15)|(PIND&240);
+  } else {
+    buf2[idx++] = (PINC&15)|(PIND&240);
+  }
+  
+  if (idx >= sizeof(buf1)) {
+    idx = 0;
+    // increment buffer counter
+    ++bcnt;
+    write_to_1 = !write_to_1; 
+  }
+
+  if (bcnt > 100) {
+    triggered = false;
+  }
+}  // end of pclk
+
+void pclk3 () 
+{
+  if (!triggered)
+    return;
+
+  // write the data to the buffer
   *bp = (PINC&15)|(PIND&240);
   
   if ((bp - curr_bp) < sizeof(buf1)) {
@@ -60,13 +85,14 @@ void pclk ()
       bp = &buf1[0];
     } else {
       bp = &buf2[0];
-    } 
+    }
+    //curr_bp = bp;  
   }
 
   if (bcnt > 100) {
     triggered = false;
   }
-}  // end of pclk
+}  // end of pclk3
 
 void vsync1() {
   sync ^= 1;
@@ -120,8 +146,12 @@ void setup() {
   Serial.begin(115200);
 
   uint8_t*b4=buf1;
-  for (int x = 0; x < sizeof(buf1) / sizeof(buf1[0]); x++) {
-    *b4++ = 0;
+  for (int x = 0; x < sizeof(buf1); x++) {
+    *b4++ = 1;
+  }
+  uint8_t*b5=buf2;
+  for (int x = 0; x < sizeof(buf2); x++) {
+    *b5++ = 2;
   }
 
   
@@ -138,7 +168,7 @@ void setup() {
   
   pinMode(pcklPin, INPUT_PULLUP);
   pinMode(vsyncPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(vsyncPin), vsync, FALLING);
+//  attachInterrupt(digitalPinToInterrupt(vsyncPin), vsync, FALLING);
   attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, FALLING);
 //  attachInterrupt(digitalPinToInterrupt(vsyncPin), timer, FALLING);
 //  attachInterrupt(digitalPinToInterrupt(pcklPin), timer, FALLING);
@@ -175,15 +205,21 @@ void pr_data(byte data) {
   Serial.print( (data >> 3) & 1 );
   Serial.print( (data >> 2) & 1 );      
   Serial.print( (data >> 1) & 1 );      
-  Serial.println(data & 1 );    
+  Serial.print( data & 1 );
+  Serial.print( " " );   
   } //end pr_data
 
 void loop() {
     if (measurements > 10) 
-    return;
+    return;    
     
-    if (!triggered)
-    return;
+    while(!(PIND & B00001000));//wait for vs high
+    idx = 0;
+    bcnt = 0;
+    write_to_1 = true;
+    while((PIND & B00001000));//wait for vs low
+    triggerTime = micros ();
+    triggered = true;
 
     //detachInterrupt(digitalPinToInterrupt(3));
     //Serial.println("triggered");  
@@ -193,23 +229,38 @@ void loop() {
 //    while(!(PIND & B00000100));//wait for pckl high 
     //while(!(PIND & B00010000));//wait for D4 high 
     
-   unsigned long elapsed = micros() - triggerTime;
-   if (elapsed < 3000L)
-    {
-    return;  // wait 3 milliseconds.
-    }
+   while(bcnt < 11); // wait for next buffer
 
-  ++measurements;  
-
+  /*
+  Serial.print( "bcnt: ");
+  Serial.print( bcnt );
+  Serial.print( " buf: ");
   if (write_to_1) {
-    for (int x = 0; x < 10; x++) {
+    Serial.println( 2 );      
+  } else {
+    Serial.println( 1 );  
+  }
+
+  */
+  Serial.print( bcnt );
+  Serial.print( " " );
+
+  int limit = sizeof(buf1);
+  
+  if (write_to_1) {
+    for (int x = 0; x < limit; x++) {
     pr_data(buf2[x]);   
     } 
+    Serial.println();
   } else {
-    for (int x = 0; x < 10; x++) {
+    for (int x = 0; x < limit; x++) {
     pr_data(buf1[x]);      
     }
+    Serial.println();
   }
+
+  triggered = false;
+  ++measurements; 
      
 
  /*   
