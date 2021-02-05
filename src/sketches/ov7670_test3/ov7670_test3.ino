@@ -62,6 +62,10 @@ void pclk ()
       bp = &buf2[0];
     } 
   }
+
+  if (bcnt > 100) {
+    triggered = false;
+  }
 }  // end of pclk
 
 void vsync1() {
@@ -189,14 +193,34 @@ void loop() {
 //    while(!(PIND & B00000100));//wait for pckl high 
     //while(!(PIND & B00010000));//wait for D4 high 
     
+   unsigned long elapsed = micros() - triggerTime;
+   if (elapsed < 3000L)
+    {
+    return;  // wait 3 milliseconds.
+    }
+
+  ++measurements;  
+
+  if (write_to_1) {
+    for (int x = 0; x < 10; x++) {
+    pr_data(buf2[x]);   
+    } 
+  } else {
+    for (int x = 0; x < 10; x++) {
+    pr_data(buf1[x]);      
+    }
+  }
+     
+
+ /*   
+
   unsigned long elapsed = micros() - triggerTime;
   ++measurements;
-
-  
-  if (elapsed < 20L)
+ 
+  if (elapsed < 3000L)
     {
     triggered = false;
-    return;  // ignore if less than 20 microseconds
+    return;  // ignore if less than 3 milliseconds.
     }
     
   triggered = false;  // re-arm for next time
@@ -229,6 +253,7 @@ void loop() {
       Serial.print(" ");
       pr_data((PINC&15)|(PIND&240));      
   }
+  */
 
   /*
   int lcnt = 0;
