@@ -1,54 +1,20 @@
-
-unsigned long lastTriggerTime;
 volatile unsigned long triggerTime;
 volatile boolean triggered;
 uint8_t measurements = 0;
 
 volatile boolean write_to_1;
-
-uint16_t vcnt = 0;
-uint16_t pcnt = 0;
 volatile uint16_t bcnt = 0;
 
-unsigned long t0;
-unsigned long dt;
-
-volatile byte sync = 0;
-
-uint8_t buf1[64];
-uint8_t buf2[64];
+uint8_t buf1[640];
+uint8_t buf2[640];
 volatile int idx = 0;
-
-volatile uint8_t*bp;       // a pointer to an unsigned byte type
-volatile uint8_t*curr_bp;  // last buffer points to the indicator
-
-void timer () 
-{
-  // wait until we noticed last one
-  if (triggered)
-    return;
-
-  triggerTime = micros ();
-  triggered = true;
-}  // end of timer
-
-void vsync () 
-{
-  if (triggered)
-    return;
-
-  triggerTime = micros ();
-  triggered = true;
-  bcnt = 0;
-  write_to_1 = true;
-}  // end of vsync
 
 void pclk () 
 {
   if (!triggered)
     return;
-
-  // write the data to the buffer
+    
+  // write the data to the active buffer
   if (write_to_1) {
     buf1[idx++] = (PINC&15)|(PIND&240);
   } else {
@@ -62,140 +28,12 @@ void pclk ()
     write_to_1 = !write_to_1; 
   }
 
-  if (bcnt > 100) {
+  // 6200 buffers at 64 bytes per buffer
+  
+  if (bcnt > 6200) {
     triggered = false;
   }
 }  // end of pclk
-
-void pclk3 () 
-{
-  if (!triggered)
-    return;
-
-  // write the data to the buffer
-  *bp = (PINC&15)|(PIND&240);
-  
-  if ((bp - curr_bp) < sizeof(buf1)) {
-    ++bp; 
-  } else {
-    // increment buffer counter
-    ++bcnt;
-    write_to_1 = !write_to_1;    
-    if (write_to_1) {
-      bp = &buf1[0];
-    } else {
-      bp = &buf2[0];
-    }
-    //curr_bp = bp;  
-  }
-
-  if (bcnt > 100) {
-    triggered = false;
-  }
-}  // end of pclk3
-
-void vsync1() {
-  sync ^= 1;
-  ++vcnt;
-  bcnt = 0;
-  if (curr_bp == &buf1[0]) {
-      bp = &buf2[0];
-   } else {
-      bp = &buf1[0];
-   }
-   curr_bp = bp;     
-}
-
-void pclk1() {
-  // write the data to the buffer
-  *bp = (PINC&15)|(PIND&240);
-
-  if ((bp - curr_bp) < sizeof(buf1)) {
-    ++bp; 
-  } else {
-    // increment buffer counter
-    ++bcnt;    
-    if (curr_bp == &buf1[0]) {
-      bp = &buf2[0];
-    } else {
-      bp = &buf1[0];
-    }
-    curr_bp = bp; 
-  }
-}
-
-
-
-void setup() {
-  /*==============================================================================
- * Use timer1 to generate an 8 Mhz XCLK signal on pin 11
- *============================================================================*/
-
-  // use timer1 to generate an 8 Mhz clock on pin 11
-  cli();//disable interrupts
-  /* Setup the 8mhz PWM clock 
-   * This will be on pin 11*/
-  DDRB|=(1<<3);//pin 11
-  ASSR &= ~(_BV(EXCLK) | _BV(AS2));
-  TCCR2A=(1<<COM2A0)|(1<<WGM21)|(1<<WGM20);
-  TCCR2B=(1<<WGM22)|(1<<CS20);
-  OCR2A=0; //no pre-scaler (F_CPU)/(2*(X+1))
-
-  sei();//enable interrupts 
-
-  Serial.begin(115200);
-
-  uint8_t*b4=buf1;
-  for (int x = 0; x < sizeof(buf1); x++) {
-    *b4++ = 1;
-  }
-  uint8_t*b5=buf2;
-  for (int x = 0; x < sizeof(buf2); x++) {
-    *b5++ = 2;
-  }
-
-  
-  delay(3000);
- 
-  DDRC&=~15;//low d0-d3 camera
-  DDRD&=~252;//d7-d4 and interrupt pins
-
-  const byte pcklPin = 2;
-  const byte vsyncPin = 3;
-  bp = &buf1[0];
-  curr_bp = bp;
-
-  
-  pinMode(pcklPin, INPUT_PULLUP);
-  pinMode(vsyncPin, INPUT_PULLUP);
-//  attachInterrupt(digitalPinToInterrupt(vsyncPin), vsync, FALLING);
-  attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, FALLING);
-//  attachInterrupt(digitalPinToInterrupt(vsyncPin), timer, FALLING);
-//  attachInterrupt(digitalPinToInterrupt(pcklPin), timer, FALLING);
-
-}
-
-void pr_pindc() {
-  byte pins_d = PIND;
-  byte pins_c = PINC;
-  Serial.print( (pins_d >> 7) & 1 );
-  Serial.print( (pins_d >> 6) & 1 );
-  Serial.print( (pins_d >> 5) & 1 );
-  Serial.print( (pins_d >> 4) & 1 ); 
-  Serial.print( (pins_d >> 3) & 1 );
-  Serial.print( (pins_d >> 2) & 1 );      
-  Serial.print( (pins_d >> 1) & 1 );      
-  Serial.print( pins_d & 1 );
-  Serial.print( " " );            
-  Serial.print( (pins_c >> 7) & 1 );
-  Serial.print( (pins_c >> 6) & 1 );
-  Serial.print( (pins_c >> 5) & 1 );
-  Serial.print( (pins_c >> 4) & 1 ); 
-  Serial.print( (pins_c >> 3) & 1 );
-  Serial.print( (pins_c >> 2) & 1 );      
-  Serial.print( (pins_c >> 1) & 1 );      
-  Serial.println( pins_c & 1 );  
-  } //end pr_pindc
 
 void pr_data(byte data) {
   Serial.print( (data >> 7) & 1 );
@@ -209,144 +47,106 @@ void pr_data(byte data) {
   Serial.print( " " );   
   } //end pr_data
 
-void loop() {
-    if (measurements > 10) 
-    return;    
+  /* approximately 0.25 microseconds per pixel clock cycle
+   * 0.16ms per row => 640 ticks 
+   * 36 microsecond gap between rows => 144 ticks
+   * 99 ms per vsync => 396000 ticks
+   * 3.3 ms gap before first row => 13,200 ticks
+   * 1.96 ms gap after last row => 7840 ticks
+   * 480 rows, 784 ticks per row => 376320 ticks 
+   * 376320 + 13200 + 7840 => 397360 ticks per frame, at 0.25 us => ~99.3ms per frame
+   * 64 bytes per buffer => ~6200 buffers per frame
+   * you can ignore the first 205
+   */
+void captureFrm () {
+  while(!(PIND & B00001000));//wait for vs high
+  idx = 0;
+  bcnt = 0;
+  write_to_1 = true;
+  while((PIND & B00001000));//wait for vs low
+  triggerTime = micros ();
+  triggered = true;
     
-    while(!(PIND & B00001000));//wait for vs high
-    idx = 0;
-    bcnt = 0;
-    write_to_1 = true;
-    while((PIND & B00001000));//wait for vs low
-    triggerTime = micros ();
-    triggered = true;
-
-    //detachInterrupt(digitalPinToInterrupt(3));
-    //Serial.println("triggered");  
-    //while(!(PIND&8));//wait for vs high
-    //while(!(PIND & B10000000));//wait for D7 high 
-//    while(!(PIND & B00001000));//wait for vs high 
-//    while(!(PIND & B00000100));//wait for pckl high 
-    //while(!(PIND & B00010000));//wait for D4 high 
-    
-   while(bcnt < 11); // wait for next buffer
+  while(bcnt < 206); // wait for first data buffer
+  while(bcnt < 300);
+  // just testing
+  uint16_t last_bcnt = bcnt;
 
   /*
-  Serial.print( "bcnt: ");
-  Serial.print( bcnt );
-  Serial.print( " buf: ");
-  if (write_to_1) {
-    Serial.println( 2 );      
-  } else {
-    Serial.println( 1 );  
-  }
+  while(bcnt < 210) {
+    Serial.print( bcnt );
+    Serial.print( " " );
+ */ 
+//    while(bcnt == last_bcnt); // wait for next buffer
+//    last_bcnt = bcnt; 
+//  }
+  
+  for (int j = 0; j < 10; j++) {
+  
 
-  */
   Serial.print( bcnt );
-  Serial.print( " " );
 
-  int limit = sizeof(buf1);
+
+  //int limit = sizeof(buf1);
+  int limit = 2;
   
   if (write_to_1) {
+    Serial.print( " 2 " );
     for (int x = 0; x < limit; x++) {
     pr_data(buf2[x]);   
     } 
     Serial.println();
   } else {
+    Serial.print( " 1 " );
     for (int x = 0; x < limit; x++) {
     pr_data(buf1[x]);      
     }
     Serial.println();
   }
 
+  } // outer loop
+
   triggered = false;
+} //end captureFrm
+
+void setup() {
+  /*==============================================================================
+ * Use timer1 to generate an 8 Mhz XCLK signal on pin 11
+ *============================================================================*/
+
+  // use timer2 to generate an 1 Mhz clock on pin 11
+  // see http://www.8bit-era.cz/arduino-timer-interrupts-calculator.html
+  cli();//disable interrupts
+  /* Setup the PWM clock 
+   * This will be on pin 11*/
+  DDRB|=(1<<3);//pin 11
+  ASSR &= ~(_BV(EXCLK) | _BV(AS2));
+  TCCR2A=(1<<COM2A0)|(1<<WGM21)|(1<<WGM20);
+  TCCR2B=(1<<WGM22)|(1 << CS00);  
+  OCR2A=7; // 1mhz 
+//  OCR2A=0; //no pre-scaler (F_CPU)/(2*(X+1))
+
+  sei();//enable interrupts 
+
+  Serial.begin(115200); 
+  delay(1000);
+ 
+  DDRC&=~15;//low d0-d3 camera
+  DDRD&=~252;//d7-d4 and interrupt pins
+
+  const byte pcklPin = 2;
+  pinMode(pcklPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, RISING);
+}
+
+
+void loop() {
+  if (measurements > 10)
+  return;    
+
+  captureFrm();
+   
   ++measurements; 
-     
-
- /*   
-
-  unsigned long elapsed = micros() - triggerTime;
-  ++measurements;
- 
-  if (elapsed < 3000L)
-    {
-    triggered = false;
-    return;  // ignore if less than 3 milliseconds.
-    }
-    
-  triggered = false;  // re-arm for next time
-  //attachInterrupt(digitalPinToInterrupt(3), timer, FALLING);
-  
-  Serial.print ("Took: ");
-  Serial.print (elapsed);
-  Serial.print (" microseconds. ");
-  
-  unsigned long minutes, seconds, ms;
-  
-  minutes = elapsed / (1000000L * 60);
-  elapsed -= minutes * (1000000L * 60);
-  
-  seconds = elapsed / 1000000L;
-  elapsed -= seconds * 1000000L;
-  
-  ms = elapsed / 1000;
-  elapsed -= ms * 1000;
-  
-  Serial.print (minutes);
-  Serial.print ("m ");
-  Serial.print (seconds);
-  Serial.print ("s ");
-  Serial.print (ms);
-  Serial.println ("ms.");
-
-  for (int x = 0; x < 10; x++) {
-      Serial.print(micros() - triggerTime);
-      Serial.print(" ");
-      pr_data((PINC&15)|(PIND&240));      
-  }
-  */
-
-  /*
-  int lcnt = 0;
-
-  uint8_t*bp2,*bp3;
-  
-  while(vcnt % 100 == 0) {
-    Serial.print("vcnt ");
-    Serial.print(vcnt);
-    Serial.print(" lcnt");
-    Serial.print(lcnt++);
-    Serial.print(" bcnt ");
-    Serial.print(bcnt);
-    if (curr_bp == &buf2[0]) {
-      bp2 = &buf1[0];
-      bp3 = (bp2+4);
-      *bp3 = 0xFF;
-      buf2[5] = 0xFF;
-      Serial.print(" buf1 ");
-    } else {
-      bp2 = &buf2[0];
-      bp3 = (bp2+4);
-      *bp3 = 0xFF;
-      buf1[5] = 0xFF;      
-      Serial.print(" buf2 "); 
-    }
-
- for (int x = 0; x < 10; x++) {
-    if (curr_bp == &buf2[0]) {
-      Serial.print(buf1[x], HEX);
-      Serial.print(" ");      
-    } else {
-      Serial.print(buf2[x], HEX);
-      Serial.print(" ");
-    }
-   }   
-
- 
-    Serial.println();
-  }
-  */
-    
 }
 
   
