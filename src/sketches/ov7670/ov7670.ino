@@ -27,6 +27,8 @@
 #include <Wire.h>
 #include <Firmata.h>
 
+#define OV7670_COMMAND              0x40 // hacking in a new sysex command
+
 #define I2C_WRITE                   B00000000
 #define I2C_READ                    B00001000
 #define I2C_READ_CONTINUOUSLY       B00010000
@@ -486,6 +488,17 @@ void sysexCallback(byte command, byte argc, byte *argv)
   unsigned int delayTime;
 
   switch (command) {
+    case OV7670_COMMAND:
+      Firmata.sendString("Got it");
+      switch (argv[0]) {
+        case 0x01:
+           Firmata.sendString("Got 0x01");
+           break;
+        case 0x02:
+           Firmata.sendString("Got 0x02");
+           break;
+      }
+      return;
     case I2C_REQUEST:
       mode = argv[1] & I2C_READ_WRITE_MODE_MASK;
       if (argv[1] & I2C_10BIT_ADDRESS_MODE_MASK) {

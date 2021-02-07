@@ -10,6 +10,8 @@
 ;; http://embeddedprogrammer.blogspot.com/2012/07/hacking-ov7670-camera-module-sccb-cheat.html
 
 (def i2c-address 0x21)
+(def OV7670-COMMAND  0x40) ;; just testing
+
 
 (def parameters (atom {:debug #{:printer}}))
 
@@ -88,6 +90,11 @@
     (apply write-bytes conn 
            (mapcat (fn [b] [(lsb b) (msb b)])
                    data))))
+
+(defn- bits [n]
+  (-> (map #(bit-and (bit-shift-right n %) 1) (range 8))
+      reverse))
+
 (comment
   ;; echo test
   (doto board
@@ -99,9 +106,14 @@
 
   (doto board
     (write-bytes START-SYSEX
-                 I2C)
+                 OV7670-COMMAND
+                 0x02)
+    ;;    (write-data  (map byte [\A \B \C]))
     (write-bytes END-SYSEX)
     )
+  (bits 0x38)
+  (bits (bit-and 0x51 0x7f))
+
   )
 
 (comment 
