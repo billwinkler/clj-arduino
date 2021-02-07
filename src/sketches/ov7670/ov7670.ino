@@ -752,6 +752,11 @@ void systemResetCallback()
   isResetting = false;
 }
 
+void stringCallback(char *myString)
+{
+  Firmata.sendString(myString);
+}
+
 volatile unsigned long triggerTime;
 volatile boolean triggered;
 uint8_t measurements = 0;
@@ -789,11 +794,72 @@ void pclk ()
   }
 }  // end of pclk
 
+ /* approximately 0.25 microseconds per pixel clock cycle
+   * 0.16ms per row => 640 ticks 
+   * 36 microsecond gap between rows => 144 ticks
+   * 99 ms per vsync => 396000 ticks
+   * 3.3 ms gap before first row => 13,200 ticks
+   * 1.96 ms gap after last row => 7840 ticks
+   * 480 rows, 784 ticks per row => 376320 ticks 
+   * 376320 + 13200 + 7840 => 397360 ticks per frame, at 0.25 us => ~99.3ms per frame
+   * 64 bytes per buffer => ~6200 buffers per frame
+   * you can ignore the first 205
+   */
+void captureFrm () {
+  while(!(PIND & B00001000));//wait for vs high
+  idx = 0;
+  bcnt = 0;
+  write_to_1 = true;
+  while((PIND & B00001000));//wait for vs low
+  triggerTime = micros ();
+  triggered = true;
+    
+  while(bcnt < 206); // wait for first data buffer
+  while(bcnt < 300);
+  // just testing
+  uint16_t last_bcnt = bcnt;
+
+  /*
+  while(bcnt < 210) {
+    Serial.print( bcnt );
+    Serial.print( " " );
+ */ 
+//    while(bcnt == last_bcnt); // wait for next buffer
+//    last_bcnt = bcnt; 
+//  }
+  
+  for (int j = 0; j < 10; j++) {
+  
+
+  Serial.print( bcnt );
+
+
+  //int limit = sizeof(buf1);
+  int limit = 2;
+  
+  if (write_to_1) {
+    Serial.print( " 2 " );
+    for (int x = 0; x < limit; x++) {
+    //pr_data(buf2[x]);   
+    } 
+    Serial.println();
+  } else {
+    Serial.print( " 1 " );
+    for (int x = 0; x < limit; x++) {
+    //pr_data(buf1[x]);      
+    }
+    Serial.println();
+  }
+
+  } // outer loop
+
+  triggered = false;
+} //end captureFrm
   
 void setup()
 {
 /*==============================================================================
-  * Use timer2 to generate an 1 Mhz XCLK signal on pin 11
+  * Use timer2 to generate an x Mhz XCLK signal on pin 11
   *============================================================================*/
 
   // see http://www.8bit-era.cz/arduino-timer-interrupts-calculator.html
@@ -803,9 +869,10 @@ void setup()
   DDRB|=(1<<3);//pin 11
   ASSR &= ~(_BV(EXCLK) | _BV(AS2));
   TCCR2A=(1<<COM2A0)|(1<<WGM21)|(1<<WGM20);
-  TCCR2B=(1<<WGM22)|(1 << CS00);  
-  OCR2A=7; // 1mhz 
-//  OCR2A=0; //no pre-scaler (F_CPU)/(2*(X+1))
+  TCCR2B=(1<<WGM22)|(1<<CS20);
+  //TCCR2B=(1<<WGM22)|(1 << CS00);  
+  //OCR2A=7; // 1mhz 
+  OCR2A=0; //no pre-scaler (F_CPU)/(2*(X+1))
 
   sei();//enable interrupts 
 
@@ -822,6 +889,8 @@ void setup()
   Firmata.attach(SET_DIGITAL_PIN_VALUE, setPinValueCallback);
   Firmata.attach(START_SYSEX, sysexCallback);
   Firmata.attach(SYSTEM_RESET, systemResetCallback);
+
+  Firmata.attach(STRING_DATA, stringCallback);
 
   // to use a port other than Serial, such as Serial1 on an Arduino Leonardo or Mega,
   // Call begin(baud) on the alternate serial port and pass it to Firmata to begin like this:
@@ -842,7 +911,7 @@ void setup()
 
   const byte pcklPin = 2;
   pinMode(pcklPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, RISING);
+  //attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, RISING);
 
 
 }
@@ -856,36 +925,11 @@ void loop()
 
   /* DIGITALREAD - as fast as possible, check for changes and output them to the
    * FTDI buffer using Serial.print()  */
-  checkDigitalInputs();
+  //checkDigitalInputs();
 
   /* STREAMREAD - processing incoming messagse as soon as possible, while still
    * checking digital inputs.  */
   while (Firmata.available())
     Firmata.processInput();
 
-  // TODO - ensure that Stream buffer doesn't go over 60 bytes
-
-  currentMillis = millis();
-  if (currentMillis - previousMillis > samplingInterval) {
-    previousMillis += samplingInterval;
-    /* ANALOGREAD - do all analogReads() at the configured sampling interval */
-    for (pin = 0; pin < TOTAL_PINS; pin++) {
-      if (IS_PIN_ANALOG(pin) && Firmata.getPinMode(pin) == PIN_MODE_ANALOG) {
-        analogPin = PIN_TO_ANALOG(pin);
-        if (analogInputsToReport & (1 << analogPin)) {
-          Firmata.sendAnalog(analogPin, analogRead(analogPin));
-        }
-      }
-    }
-    // report i2c data for all device with read continuous mode enabled
-    if (queryIndex > -1) {
-      for (byte i = 0; i < queryIndex + 1; i++) {
-        readAndReportData(query[i].addr, query[i].reg, query[i].bytes, query[i].stopTX);
-      }
-    }
-  }
-
-#ifdef FIRMATA_SERIAL_FEATURE
-  serialFeature.update();
-#endif
 }
