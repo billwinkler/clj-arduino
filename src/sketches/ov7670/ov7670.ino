@@ -26,6 +26,7 @@
 #include <Servo.h>
 #include <Wire.h>
 #include <Firmata.h>
+#include <string.h>
 
 #define OV7670_COMMAND              0x40 // hacking in a new sysex command
 
@@ -487,6 +488,10 @@ void sysexCallback(byte command, byte argc, byte *argv)
   int slaveRegister;
   unsigned int delayTime;
 
+  byte buf[100];
+  int idx = 0;
+  unsigned long trigger, elapsed;
+  
   switch (command) {
     case OV7670_COMMAND:
       Firmata.sendString("Got it");
@@ -497,7 +502,63 @@ void sysexCallback(byte command, byte argc, byte *argv)
         case 0x02:
            Firmata.sendString("Got 0x02");
            break;
-      }
+        case 0x03: // send the pinc & pind values
+           for (int x = 0; x < 40; x+=4) {
+            byte pin_c, pin_d;
+            pin_c = PINC;
+            pin_d = PIND;
+            buf[x] = pin_c & 0x0F;
+            pin_c >>= 4;
+            buf[x+1] = pin_c & 0x0F;
+            buf[x+2] = pin_d & 0x0F;
+            pin_d >>= 4;
+            buf[x+3] = pin_d & 0x0F;   
+           }
+           Firmata.sendSysex(STRING_DATA, 40, buf);
+           break;
+
+        case 0x04: // send the vs & pckl values
+           for (int x = 0; x < 40; x+=4) {
+            buf[x] = (PIND >> 4) & 1;
+            buf[x+1] = (PIND >> 3) & 1;
+            buf[x+2] = 0x3;
+            buf[x+3] = 0x7;  
+           }         
+           Firmata.sendSysex(STRING_DATA, 40, buf);
+           break;
+         case 0x05: // vs timer
+            while(!(PIND & B00001000));//wait for vs high
+            while((PIND & B00001000));//wait for vs low
+            trigger = micros ();
+            while(!(PIND & B00001000));//wait for vs high
+            while((PIND & B00001000));//wait for vs low
+            elapsed = micros() - trigger;
+            buf[0] = elapsed & 0x7f;
+            elapsed >>= 7;
+            buf[1] = elapsed & 0x7f;
+            elapsed >>= 7;
+            buf[2] = elapsed & 0x7f;
+            elapsed >>= 7;
+            buf[3] = elapsed & 0x7f;        
+           Firmata.sendSysex(STRING_DATA, 4, buf);
+           break;
+         case 0x06: // pckl timer
+            while(!(PIND & B00000100));//wait for vs high
+            while((PIND & B00000100));//wait for vs low
+            trigger = micros ();
+            while(!(PIND & B00000100));//wait for vs high
+            while((PIND & B00000100));//wait for vs low
+            elapsed = micros() - trigger;
+            buf[0] = elapsed & 0x7f;
+            elapsed >>= 7;
+            buf[1] = elapsed & 0x7f;
+            elapsed >>= 7;
+            buf[2] = elapsed & 0x7f;
+            elapsed >>= 7;
+            buf[3] = elapsed & 0x7f;        
+           Firmata.sendSysex(STRING_DATA, 4, buf);
+           break;           
+         }
       return;
     case I2C_REQUEST:
       mode = argv[1] & I2C_READ_WRITE_MODE_MASK;

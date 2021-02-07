@@ -56,18 +56,7 @@
 (pipeline 1 out> xform readings>)
 
 
-;; default baudrate is 57600
-;;  (def board (arduino :firmata (arduino-port)))
-;;  (def board (arduino :firmata (arduino-port) :msg-callback msg-handler))
-;;  (def board (arduino :firmata (arduino-port) :baudrate 115200))
-;;  (def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler))
- (defn echo-callback
-   [msg]
-   (println (mapv #(format "%02X" (byte %)) msg)
-            (->> (partition 2 msg) (map first) (apply str))))
 
-(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback echo-callback))
-;;(close board)
 
 (defn- write-bytes [conn & bs]
   (let [out (.getOutputStream (:port @conn))]
@@ -92,8 +81,37 @@
                    data))))
 
 (defn- bits [n]
-  (-> (map #(bit-and (bit-shift-right n %) 1) (range 8))
-      reverse))
+  (->> (map #(bit-and (bit-shift-right n %) 1) (range 8))
+      reverse
+      (apply str)))
+
+;; default baudrate is 57600
+;;  (def board (arduino :firmata (arduino-port)))
+;;  (def board (arduino :firmata (arduino-port) :msg-callback msg-handler))
+;;  (def board (arduino :firmata (arduino-port) :baudrate 115200))
+;;  (def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler))
+ (defn echo-callback
+   [msg]
+   (println (mapv #(format "%02X" (byte %)) msg)
+            (->> (partition 2 msg) (map first) (apply str))))
+
+ (defn pincd-callback
+   [msg]
+   (println (mapv (fn [[m0 m1 m2 m3]]
+                    [(bits (bit-or (bit-and (<<< m0 4) 0xf0) (bit-and m1 0x0f)))
+                     (bits (bit-or (bit-and (<<< m2 4) 0xf0) (bit-and m3 0x0f)))])
+                  (->> (map byte msg) (partition 4)))))
+
+ (defn timer-callback
+   [msg]
+   (echo-callback msg)
+   (println (when (= 8 (count msg))
+              (let [[b0 b1 b2 b3] (->> (map byte msg) (partition 2) (map first))]
+                   (+ b0 (<<< b1 7) (<<< b2 14) (<<< b3 21))))))
+
+;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback echo-callback))
+(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback timer-callback))
+;;(close board)
 
 (comment
   ;; echo test
@@ -107,7 +125,7 @@
   (doto board
     (write-bytes START-SYSEX
                  OV7670-COMMAND
-                 0x02)
+                 0x06)
     ;;    (write-data  (map byte [\A \B \C]))
     (write-bytes END-SYSEX)
     )
