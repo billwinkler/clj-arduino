@@ -119,7 +119,8 @@
    (cond
      (ascii? msg) (println (as-ascii-string msg))
      (= 8 (count msg)) (println "int-> " (decode-as-int msg))
-     :else (println (as-hex-array msg))))
+     ;; print first n
+     :else (println (take 20 (as-hex-array msg)))))
 
 ;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback echo-callback))
 (def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-callback))
@@ -138,9 +139,14 @@
     (write-bytes START-SYSEX
                  OV7670-COMMAND
                  ;;0xA
-                 0x3
+                 0x0A
                  END-SYSEX))
 
+(/ 4495992 99960.0)
+(/ 4620588 799680.0)
+
+
+;; 799.680 ms
 
 (* 176 144)
 

@@ -478,15 +478,12 @@ void reportDigitalCallback(byte port, int value)
 /*==============================================================================
  * SYSEX-BASED commands
  *============================================================================*/
-void send_int(int val) {
+void send_int(long val) {
   byte bytes[4];
   bytes[0] = val & 0x7f;
-  val >>= 7;
-  bytes[1] = val & 0x7f;
-  val >>= 7;
-  bytes[2] = val & 0x7f;
-  val >>= 7;
-  bytes[3] = val & 0x7f;
+  bytes[1] = (val >>=7 ) & 0x7f;
+  bytes[2] = (val >>=7 ) & 0x7f;
+  bytes[3] = (val >>=7 ) & 0x7f;
   Firmata.sendSysex(STRING_DATA, 4, bytes);    
 }
 
@@ -501,8 +498,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
 
   byte buf[176];
   int idx = 0;
-  unsigned long trigger, elapsed;
-  int pixels;
+  long trigger, elapsed, pixels, lines;
   
   switch (command) {
     case OV7670_COMMAND:
@@ -569,19 +565,19 @@ void sysexCallback(byte command, byte argc, byte *argv)
             break;       
                                   
          case 0x08: // try to capture some pixels, qcif (176x144)
+            lines = 0;
             while(!(PIND & B00001000));//wait for vs high
-            while((PIND & B00001000));//wait for vs low
             trigger = micros ();
             for (int j=0; j < 144; j++) {
-                          
-            while(!(PIND & B00000100));//wait for pckl high
-            for (int i = 0; i < 5; i++) {
-               while((PIND & B00000100));//wait for pckl low
-               buf[i] = ((PINC&15)|(PIND&240) & 0x7f);
-            }        
-            Firmata.sendSysex(STRING_DATA, 20, buf);
-            }
-            // needs to finish in < 99900 micros
+              while(!(PIND & B00000100));//wait for pckl high
+              for (int i = 0; i < 176; i++) {
+                while((PIND & B00000100));//wait for pckl low
+                buf[i] = ((PINC&15)|(PIND&240) & 0x7f);
+              } // end of 1 line        
+              Firmata.sendSysex(STRING_DATA, 176, buf);
+              send_int(++lines);
+            } // end of all lines
+
             elapsed = micros() - trigger;
             send_int(elapsed);
            break;
