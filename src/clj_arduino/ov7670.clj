@@ -96,8 +96,12 @@
 
  (defn as-pixels
    [msg]
-   (mapv (fn [[lsb msb]] (format "[%02X %02X]" (byte lsb) (byte msb))) 
-         (partition 2 msg)))
+   (let [pixels (mapv (fn [[lsb msb]] 
+                        [(byte lsb) (byte msb) (bit-or (byte lsb) (<<< (byte msb) 7))])
+                      (partition 2 msg))]
+     [(mapv last pixels)  
+      ;;(mapv (fn [[lsb msb val]] (format "[%02X %02X %03d]" lsb msb val)) pixels)
+      ]))
 
  (defn ascii?
    [msg]
@@ -175,6 +179,10 @@
 (bits 128)
 
 ;; 799.680 ms
+
+(/ 144 16)
+(* 19 9)
+
 
 (* 176 144)
 (+ 3457 3358)
