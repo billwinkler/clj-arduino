@@ -94,6 +94,11 @@
    [msg]
    (mapv #(format "%02X" (byte %)) msg))
 
+ (defn as-pixels
+   [msg]
+   (mapv (fn [[lsb msb]] (format "[%02X %02X]" (byte lsb) (byte msb))) 
+         (partition 2 msg)))
+
  (defn ascii?
    [msg]
    (->> (partition 2 msg) (map (comp long first)) (every? #(< 0x19 % 0x7f))))
@@ -107,6 +112,20 @@
    (let [[b0 b1 b2 b3] (->> (map byte msg) (partition 2) (map first))]
      (+ b0 (<<< b1 7) (<<< b2 14) (<<< b3 21))))
 
+ (defn decode-as-case
+   [msg]
+   (case (-> msg first byte)
+     1 "confirm case statement"
+     3 "pinc & d, 4bit per byte"
+     4 "40 bytes of vs, pckl flags"
+     5 "vs time in microseconds"
+     6 "pckl time in microseconds"
+     7 "captured pixel counts"
+     8 "data"
+     9 "reset clock at 1mhz"
+     10 "restore clock to 8mhz"
+     nil))
+
  (defn pincd-callback
    [msg]
    (println (mapv (fn [[m0 m1 m2 m3]]
@@ -116,11 +135,24 @@
 
  (defn msg-callback
    [msg]
-   (cond
-     (ascii? msg) (println (as-ascii-string msg))
-     (= 8 (count msg)) (println "int-> " (decode-as-int msg))
-     ;; print first n
-     :else (println (take 20 (as-hex-array msg)))))
+   (let [flag (-> msg first long)
+         data (drop 2 msg)]
+     (when-let [case (decode-as-case msg)] (println case))
+     (cond
+       (= 0x00 flag) (println "case: " (decode-as-int data))
+       (= 0x03 flag) (println "pinc&d: " (pincd-callback data))
+       (= 0x04 flag) (println "vsync, pckl: " (as-hex-array data))
+       (= 0x05 flag) (println "vs: " (decode-as-int data))
+       (= 0x06 flag) (println "pckl: " (decode-as-int data))
+       (= 0x07 flag) (println "pixels: " (decode-as-int data))
+       (= 0x17 flag) (println "invalid: " (decode-as-int data))
+       (= 0x08 flag) (println (take 60 (as-pixels data)))
+       (= 0x18 flag) (println "line: " (decode-as-int data))
+       (= 0x28 flag) (println "time: " (decode-as-int data))
+       (= 8 (count data)) (println "int-> " (decode-as-int data))
+       (ascii? data) (println (as-ascii-string msg))
+       ;; print first n
+       :else (println (take 20 (as-hex-array msg))))))
 
 ;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback echo-callback))
 (def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-callback))
@@ -129,26 +161,23 @@
 (comment
   ;; echo test
   (doto board
-    (write-bytes START-SYSEX 
-                 STRING-DATA)
-    (write-data  (map byte [\A \B \C]))
-    (write-bytes END-SYSEX)
-    )
-
-  (doto board
     (write-bytes START-SYSEX
                  OV7670-COMMAND
                  ;;0xA
-                 0x0A
+                 0x08
                  END-SYSEX))
 
 (/ 4495992 99960.0)
 (/ 4620588 799680.0)
-
+(bit-and 125 0x7f)
+(char 125)
+(char 0x7d)
+(bits 128)
 
 ;; 799.680 ms
 
 (* 176 144)
+(+ 3457 3358)
 
 
   )
@@ -159,6 +188,7 @@
   (read-register 1)
   ;; video format
   (read-register 0x12)
+  (enable-scaling)
   (set-video-format :qcif)
 
   ;; bit 5 PCLK does not toggle on horizontal blank
