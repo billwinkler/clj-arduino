@@ -99,7 +99,9 @@
    (let [pixels (mapv (fn [[lsb msb]] 
                         [(byte lsb) (byte msb) (bit-or (byte lsb) (<<< (byte msb) 7))])
                       (partition 2 msg))]
-     [(mapv last pixels)  
+     [;;(mapv last pixels)
+      ;; should be the grayscale channel from the YUV encoding
+      (mapv (comp last first) (partition 2 pixels))  
       ;;(mapv (fn [[lsb msb val]] (format "[%02X %02X %03d]" lsb msb val)) pixels)
       ]))
 
@@ -151,8 +153,9 @@
        (= 0x07 flag) (println "pixels: " (decode-as-int data))
        (= 0x17 flag) (println "invalid: " (decode-as-int data))
        (= 0x08 flag) (println (take 60 (as-pixels data)))
-       (= 0x18 flag) (println "line: " (decode-as-int data))
-       (= 0x28 flag) (println "time: " (decode-as-int data))
+       (= 0x18 flag) (println "begin frame")
+       (= 0x28 flag) (println "line: " (decode-as-int data))
+       (= 0x38 flag) (println "time: " (decode-as-int data))
        (= 8 (count data)) (println "int-> " (decode-as-int data))
        (ascii? data) (println (as-ascii-string msg))
        ;; print first n
@@ -161,34 +164,37 @@
 ;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback echo-callback))
 (def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-callback))
 ;;(close board)
+(def cmds {:test          0x01
+           :some-pinc-d   0x03
+           :some-timing   0x04
+           :vsync-timing  0x05
+           :pckl-timing   0x06
+           :count-pixels   0x07
+           :capture-image 0x08
+           :clock-at-1mhz 0x09
+           :clock-at-8mhz 0x0A})
 
-(comment
-  ;; echo test
+(defn cmd
+  "send instruction to the firmata controller"
+  [cmd]
   (doto board
     (write-bytes START-SYSEX
                  OV7670-COMMAND
-                 ;;0xA
-                 0x08
-                 END-SYSEX))
+                 (cmd cmds)
+                 END-SYSEX)))
 
-(/ 4495992 99960.0)
-(/ 4620588 799680.0)
-(bit-and 125 0x7f)
-(char 125)
-(char 0x7d)
-(bits 128)
+(comment
+  (initialize)
+  (close board)
+  (cmd :capture-image)
+  (cmd :some-pinc-d)
+  (cmd :clock-at-1mhz)
+  (cmd :clock-at-8mhz)
+  (cmd :vsync-timing)
+  (cmd :count-pixels)
+  (cmd :pckl-timing)
 
-;; 799.680 ms
-
-(/ 144 16)
-(* 19 9)
-
-
-(* 176 144)
-(+ 3457 3358)
-
-
-  )
+)
 
 (comment 
   (i2c-init board)
@@ -242,6 +248,11 @@
         [reg _] (read-register addr)]
     (i2c-write board i2c-address addr [(bit-or reg 2r1000)])))
 
+(defn pckl-off-when-hblanking
+  "suppresses the pixel clock with not capturing data bits"
+  []
+  (i2c-write board i2c-address 0x15 [(bit-set 0 5)]))
+
 (defn soft-reset!
   "reset registers to default values"
   []
@@ -276,6 +287,14 @@
     2r00000100 :processed-bayer
     ))
 
+(defn initialize
+  []
+  (i2c-init board)
+  (enable-scaling)
+  (set-video-format :qcif)
+  (pckl-off-when-hblanking))
+
+
 
 
 (comment
@@ -287,6 +306,5 @@
   (i2c-blocking-read board i2c-address com7 1 :timeout 1000)
 
 
-  (close board)
 
   )
