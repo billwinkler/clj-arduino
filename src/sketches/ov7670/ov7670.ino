@@ -478,6 +478,17 @@ void reportDigitalCallback(byte port, int value)
 /*==============================================================================
  * SYSEX-BASED commands
  *============================================================================*/
+void send_int(int val) {
+  byte bytes[4];
+  bytes[0] = val & 0x7f;
+  val >>= 7;
+  bytes[1] = val & 0x7f;
+  val >>= 7;
+  bytes[2] = val & 0x7f;
+  val >>= 7;
+  bytes[3] = val & 0x7f;
+  Firmata.sendSysex(STRING_DATA, 4, bytes);    
+}
 
 void sysexCallback(byte command, byte argc, byte *argv)
 {
@@ -488,20 +499,20 @@ void sysexCallback(byte command, byte argc, byte *argv)
   int slaveRegister;
   unsigned int delayTime;
 
-  byte buf[100];
+  byte buf[176];
   int idx = 0;
   unsigned long trigger, elapsed;
+  int pixels;
   
   switch (command) {
     case OV7670_COMMAND:
       Firmata.sendString("Got it");
+      send_int(argv[0]);
+      
       switch (argv[0]) {
         case 0x01:
            Firmata.sendString("Got 0x01");
-           break;
-        case 0x02:
-           Firmata.sendString("Got 0x02");
-           break;
+           break;      
         case 0x03: // send the pinc & pind values
            for (int x = 0; x < 40; x+=4) {
             byte pin_c, pin_d;
@@ -521,11 +532,12 @@ void sysexCallback(byte command, byte argc, byte *argv)
            for (int x = 0; x < 40; x+=4) {
             buf[x] = (PIND >> 4) & 1;
             buf[x+1] = (PIND >> 3) & 1;
-            buf[x+2] = 0x3;
-            buf[x+3] = 0x7;  
+            buf[x+2] = 0x3; // markers
+            buf[x+3] = 0x7; // markers 
            }         
            Firmata.sendSysex(STRING_DATA, 40, buf);
            break;
+           
          case 0x05: // vs timer
             while(!(PIND & B00001000));//wait for vs high
             while((PIND & B00001000));//wait for vs low
@@ -533,33 +545,81 @@ void sysexCallback(byte command, byte argc, byte *argv)
             while(!(PIND & B00001000));//wait for vs high
             while((PIND & B00001000));//wait for vs low
             elapsed = micros() - trigger;
-            buf[0] = elapsed & 0x7f;
-            elapsed >>= 7;
-            buf[1] = elapsed & 0x7f;
-            elapsed >>= 7;
-            buf[2] = elapsed & 0x7f;
-            elapsed >>= 7;
-            buf[3] = elapsed & 0x7f;        
-           Firmata.sendSysex(STRING_DATA, 4, buf);
+            send_int(elapsed);
            break;
+           
          case 0x06: // pckl timer
-            while(!(PIND & B00000100));//wait for vs high
-            while((PIND & B00000100));//wait for vs low
+            while(!(PIND & B00000100));//wait for pckl high
+            while((PIND & B00000100));//wait for pckl low
             trigger = micros ();
-            while(!(PIND & B00000100));//wait for vs high
-            while((PIND & B00000100));//wait for vs low
+            while(!(PIND & B00000100));//wait for pckl high
+            while((PIND & B00000100));//wait for pckl low
             elapsed = micros() - trigger;
-            buf[0] = elapsed & 0x7f;
-            elapsed >>= 7;
-            buf[1] = elapsed & 0x7f;
-            elapsed >>= 7;
-            buf[2] = elapsed & 0x7f;
-            elapsed >>= 7;
-            buf[3] = elapsed & 0x7f;        
-           Firmata.sendSysex(STRING_DATA, 4, buf);
+            send_int(elapsed);            
+           break; 
+                     
+         case 0x07: // try to count pckl cycles per qcif (176x144) frame 
+            pixels = 0;       
+            while(!(PIND & B00001000)); //wait for vs high
+            while((PIND & B00001000)) { //while vs low
+              while(!(PIND & B00000100)); //wait for pckl high
+              ++pixels;
+            }
+            send_int(pixels);                   
+            break;       
+                                  
+         case 0x08: // try to capture some pixels, qcif (176x144)
+            while(!(PIND & B00001000));//wait for vs high
+            while((PIND & B00001000));//wait for vs low
+            trigger = micros ();
+            for (int j=0; j < 144; j++) {
+                          
+            while(!(PIND & B00000100));//wait for pckl high
+            for (int i = 0; i < 5; i++) {
+               while((PIND & B00000100));//wait for pckl low
+               buf[i] = ((PINC&15)|(PIND&240) & 0x7f);
+            }        
+            Firmata.sendSysex(STRING_DATA, 20, buf);
+            }
+            // needs to finish in < 99900 micros
+            elapsed = micros() - trigger;
+            send_int(elapsed);
+           break;
+           
+         case 0x09: // slow the clock down to 1mhz
+           Firmata.sendString("1mhz");
+           cli();//disable interrupts
+           DDRB|=(1<<3);//pin 11
+           ASSR &= ~(_BV(EXCLK) | _BV(AS2));
+           TCCR2A=(1<<COM2A0)|(1<<WGM21)|(1<<WGM20);
+           TCCR2B=(1<<WGM22)|(1 << CS00);  
+           OCR2A=7; // 1mhz 
+           sei();//enable interrupts 
+           delay(100); // ?         
+           Firmata.sendString("OK");
+           break;
+                                              
+         case 0x0A: // restore the pckl clock to 8mhz
+           Firmata.sendString("8mhz");
+           delay(1000); 
+           cli();//disable interrupts
+           DDRB|=(1<<3);//pin 11
+           ASSR &= ~(_BV(EXCLK) | _BV(AS2));
+           TCCR2A=(1<<COM2A0)|(1<<WGM21)|(1<<WGM20);
+           TCCR2B=(1<<WGM22)|(1<<CS20);
+           OCR2A=0; //no pre-scaler (F_CPU)/(2*(X+1))
+
+           sei();//enable interrupts 
+           delay(100); // ?                      
+           Firmata.sendString("OK");
+           break;
+           
+         case 0x0B:
+           Firmata.sendString("Got 0x0B");
            break;           
          }
       return;
+      
     case I2C_REQUEST:
       mode = argv[1] & I2C_READ_WRITE_MODE_MASK;
       if (argv[1] & I2C_10BIT_ADDRESS_MODE_MASK) {

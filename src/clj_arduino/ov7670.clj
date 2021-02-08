@@ -90,10 +90,22 @@
 ;;  (def board (arduino :firmata (arduino-port) :msg-callback msg-handler))
 ;;  (def board (arduino :firmata (arduino-port) :baudrate 115200))
 ;;  (def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler))
- (defn echo-callback
+ (defn as-hex-array
    [msg]
-   (println (mapv #(format "%02X" (byte %)) msg)
-            (->> (partition 2 msg) (map first) (apply str))))
+   (mapv #(format "%02X" (byte %)) msg))
+
+ (defn ascii?
+   [msg]
+   (->> (partition 2 msg) (map (comp long first)) (every? #(< 0x19 % 0x7f))))
+
+ (defn as-ascii-string
+   [msg]
+   (->> (partition 2 msg) (map first) (apply str)))
+
+ (defn decode-as-int
+   [msg]
+   (let [[b0 b1 b2 b3] (->> (map byte msg) (partition 2) (map first))]
+     (+ b0 (<<< b1 7) (<<< b2 14) (<<< b3 21))))
 
  (defn pincd-callback
    [msg]
@@ -102,15 +114,15 @@
                      (bits (bit-or (bit-and (<<< m2 4) 0xf0) (bit-and m3 0x0f)))])
                   (->> (map byte msg) (partition 4)))))
 
- (defn timer-callback
+ (defn msg-callback
    [msg]
-   (echo-callback msg)
-   (println (when (= 8 (count msg))
-              (let [[b0 b1 b2 b3] (->> (map byte msg) (partition 2) (map first))]
-                   (+ b0 (<<< b1 7) (<<< b2 14) (<<< b3 21))))))
+   (cond
+     (ascii? msg) (println (as-ascii-string msg))
+     (= 8 (count msg)) (println "int-> " (decode-as-int msg))
+     :else (println (as-hex-array msg))))
 
 ;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback echo-callback))
-(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback timer-callback))
+(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-callback))
 ;;(close board)
 
 (comment
@@ -125,12 +137,13 @@
   (doto board
     (write-bytes START-SYSEX
                  OV7670-COMMAND
-                 0x06)
-    ;;    (write-data  (map byte [\A \B \C]))
-    (write-bytes END-SYSEX)
-    )
-  (bits 0x38)
-  (bits (bit-and 0x51 0x7f))
+                 ;;0xA
+                 0x3
+                 END-SYSEX))
+
+
+(* 176 144)
+
 
   )
 
