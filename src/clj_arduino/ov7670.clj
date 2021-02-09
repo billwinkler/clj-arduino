@@ -14,49 +14,11 @@
 
 
 (def parameters (atom {:debug #{:printer}}))
+(def accum (atom {}))
+(def board)
 
 (def ^:private readings> (chan (a/sliding-buffer 10)))
 (def ^:private out> (chan (a/sliding-buffer 1)))
-
-(defn debug?
-  "test debug settings"
-  [some-key]
-  (contains? (:debug @parameters) some-key))
-
-(defn debug!
-  "Clear debug flags by default, or set them to some elements"
-  [& flags] (:debug (swap! parameters assoc-in [:debug] (set flags))))
-
-(defn msg-handler
-  "generate a callback function; set state machine to :init "
-  [msg]
-  (a/put! readings> msg))
-
-(defn decoder
-  "take a 4 character sysex string, 
-  output in a map as the raw decoded integer value"
-  [sysex-string]
-  (let [raw (map long sysex-string)]
-    (hash-map :raw raw
-              :pixel (->> (drop 2 raw) (take 4) decode)
-              :cnt (-> (drop 6 raw) decode))))
-
-(defn printer
-  "print some elements of the reading payload"
-  [{:keys [raw pixel cnt] :as msg}]
-  (when (and (not-empty msg)
-             (debug? :printer))
-    (println raw pixel cnt))
-  msg)
-
-(def xform (comp
-            (map decoder)
-            (map printer)))
-
-(pipeline 1 out> xform readings>)
-
-
-
 
 (defn- write-bytes [conn & bs]
   (let [out (.getOutputStream (:port @conn))]
@@ -85,11 +47,6 @@
       reverse
       (apply str)))
 
-;; default baudrate is 57600
-;;  (def board (arduino :firmata (arduino-port)))
-;;  (def board (arduino :firmata (arduino-port) :msg-callback msg-handler))
-;;  (def board (arduino :firmata (arduino-port) :baudrate 115200))
-;;  (def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler))
  (defn as-hex-array
    [msg]
    (mapv #(format "%02X" (byte %)) msg))
@@ -134,10 +91,74 @@
 
  (defn pincd-callback
    [msg]
-   (println (mapv (fn [[m0 m1 m2 m3]]
-                    [(bits (bit-or (bit-and (<<< m0 4) 0xf0) (bit-and m1 0x0f)))
-                     (bits (bit-or (bit-and (<<< m2 4) 0xf0) (bit-and m3 0x0f)))])
-                  (->> (map byte msg) (partition 4)))))
+   (mapv (fn [[m0 m1 m2 m3]]
+           [(bits (bit-or (bit-and (<<< m0 4) 0xf0) (bit-and m1 0x0f)))
+            (bits (bit-or (bit-and (<<< m2 4) 0xf0) (bit-and m3 0x0f)))])
+         (->> (map byte msg) (partition 4))))
+
+(defn debug?
+  "test debug settings"
+  [some-key]
+  (contains? (:debug @parameters) some-key))
+
+(defn debug!
+  "Clear debug flags by default, or set them to some elements"
+  [& flags] (:debug (swap! parameters assoc-in [:debug] (set flags))))
+
+(defn msg-handler
+  "generate a callback function; set state machine to :init "
+  [msg]
+  (a/put! readings> msg))
+
+(defn ov7670-decoder
+  "decode the sysex responses"
+  [sysex-string]
+  (let [raw (map long sysex-string)
+        flag (first raw)
+        data (drop 2 raw)
+        msg (hash-map :data data)]
+    (cond
+      (= 0x00 flag) (assoc msg :case   (decode-as-int data))
+      (= 0x03 flag) (assoc msg :pinc-d (pincd-callback data))
+      (= 0x04 flag) (assoc msg :timing (as-hex-array data))
+      (= 0x05 flag) (assoc msg :vsync  (decode-as-int data))
+      (= 0x06 flag) (assoc msg :pckl   (decode-as-int data))
+      (= 0x07 flag) (assoc-in msg [:pixel-cnts :valid] (decode-as-int data))
+      (= 0x17 flag) (assoc-in msg [:pixel-cnts :invalid] (decode-as-int data))
+      (= 0x08 flag) (assoc msg :pixels (as-pixels data))
+      (= 0x18 flag) (assoc msg :begin true)
+      (= 0x28 flag) (assoc msg :line (decode-as-int data))
+      (= 0x38 flag) (assoc msg :end  (decode-as-int data))
+      (ascii? data) (assoc msg :last-msg (as-ascii-string msg)))))
+
+(defn printer
+  "print some elements of the reading payload"
+  [{:keys [case vsync begin end last-msg] :as msg}]
+  (when (and (not-empty msg)
+             (debug? :printer))
+    (cond
+      last-msg (println "last-msg:" last-msg)
+      case (println "case:" case)
+      begin (println "begin:" begin)
+      end (println "end:" end)))
+  msg)
+
+(defn accumulator
+  "compile latest results"
+  [{:keys [last-msg case pixel-cnts line data pixels] :as msg}]
+  (cond
+    pixel-cnts (swap! accum update-in [:pixel-cnts] merge pixel-cnts)
+    pixels (swap! accum update-in [:image] merge {(-> (str "l" (:line @accum)) keyword) pixels})
+    (not-empty last-msg) (swap! accum merge msg)
+    :else (swap! accum merge (dissoc msg :last-msg)) )
+  msg)
+
+(def xform (comp
+            (map ov7670-decoder)
+            (map accumulator)
+            (map printer)))
+
+(pipeline 1 out> xform readings>)
 
  (defn msg-callback
    [msg]
@@ -161,8 +182,11 @@
        ;; print first n
        :else (println (take 20 (as-hex-array msg))))))
 
-;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback echo-callback))
-(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-callback))
+;; default baudrate is 57600
+;;  (def board (arduino :firmata (arduino-port)))
+;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-callback))
+(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler))
+
 ;;(close board)
 (def cmds {:test          0x01
            :some-pinc-d   0x03
@@ -184,6 +208,8 @@
                  END-SYSEX)))
 
 (comment
+  @accum
+  (get-in @accum [:image :l144])
   (initialize)
   (close board)
   (cmd :capture-image)
@@ -193,6 +219,7 @@
   (cmd :vsync-timing)
   (cmd :count-pixels)
   (cmd :pckl-timing)
+  (cmd :test)
 
 )
 
@@ -212,25 +239,8 @@
   (debug! :printer)
   (debug!)
 
-  (map #(pin-mode board % INPUT) [2 3 4 5 6 7 14 15 16 17])
+)
 
-  (def pclk 2)
-  (def vs 3)
-  (def d0 14)
-  (def d1 15)
-  (def d2 16)
-  (def d3 17)
-  (def d4 4)
-  (def d5 5)
-  (def d6 6)
-  (def d7 7)
-
-  (map #(digital-read board %) [d7 d6 d5 d4 d3 d2 d1 d0])
-  (time (->> (map #(digital-read board %) (repeat 10000 pclk)) (apply max)))
-
-  (digital-read board 2))
-
-;; remember to init-i2c
 
 (defn- ->bits [i]
   "zero padded bit string"
