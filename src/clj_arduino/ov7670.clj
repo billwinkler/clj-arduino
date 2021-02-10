@@ -1,7 +1,7 @@
 (ns clj-arduino.ov7670
   (:use :reload-all clj-arduino.core)
-  (:use :reload-all clodiuno.core)
-  (:use :reload-all clodiuno.firmata)
+  (:use clodiuno.core)
+  (:use clodiuno.firmata)
   (:require [clojure.pprint :refer [cl-format]]
             [clojure.core.async
              :as a
@@ -187,9 +187,23 @@
 ;; default baudrate is 57600
 ;;  (def board (arduino :firmata (arduino-port)))
 ;;(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-callback))
-(def board (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler))
 
-;;(close board)
+(defn- firmware
+  [board]
+  (when-let [{:keys [version name]} (:firmware @board)]
+    [(->> (partition 2 name) (map first) (apply str)) version]))
+
+(defn open-board
+  "open serial port to arduino"
+  []
+  (-> (alter-var-root 
+       (var board) 
+       (constantly
+        (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler)))
+      firmware))
+
+
+
 (def cmds {:test          0x01
            :some-pinc-d   0x03
            :some-timing   0x04

@@ -1,6 +1,7 @@
 (ns clj-arduino.ov7670-img
   (:use clj-arduino.ov7670)
-  (:require [clojure.java.io :as io])
+  (:require [clojure.java.io :as io]
+            [clodiuno.core :refer [close]])
   (:import [java.awt.image BufferedImage DataBufferByte]
            [javax.imageio ImageIO]))
 
@@ -53,12 +54,10 @@
     (System/arraycopy bytes 0 data 0 (alength bytes))
     (ImageIO/write image2, "jpg", (io/file path))))
 
-(to-jpg (:image @accum) "resources/ov7670.jpg")
-
-
 (comment
   @accum
-  (get-in @accum [:image :l144])
+  (to-jpg (:image @accum) "resources/ov7670_light.jpg")
+  (open-board)
   (initialize)
   (close board)
   (cmd :capture-image)
