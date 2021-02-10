@@ -56,7 +56,10 @@
 
 (comment
   @accum
-  (to-jpg (:image @accum) "resources/ov7670_light.jpg")
+  (to-jpg (:image @accum) "resources/ov7670_8mhz_dark.jpg")
+  (to-jpg (:image @accum) "resources/ov7670_8mhz_light.jpg")
+  (to-jpg (:image @accum) "resources/ov7670_1mhz_dark.jpg")
+  (to-jpg (:image @accum) "resources/ov7670_1mhz_light.jpg")
   (open-board)
   (initialize)
   (close board)
