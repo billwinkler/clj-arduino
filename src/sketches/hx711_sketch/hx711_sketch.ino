@@ -37,7 +37,7 @@ int32_t HX711::read() {
 }
 
 HX711 hx711(2, 3);
-
+(
 void setup() {
   // put your setup code here, to run once:
   Firmata.begin();

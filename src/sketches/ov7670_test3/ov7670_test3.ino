@@ -110,11 +110,10 @@ void captureFrm () {
 } //end captureFrm
 
 void setup() {
-  /*==============================================================================
- * Use timer1 to generate an 8 Mhz XCLK signal on pin 11
- *============================================================================*/
+ /*==============================================================================
+  * Use timer2 to generate an 1 Mhz XCLK signal on pin 11
+  *============================================================================*/
 
-  // use timer2 to generate an 1 Mhz clock on pin 11
   // see http://www.8bit-era.cz/arduino-timer-interrupts-calculator.html
   cli();//disable interrupts
   /* Setup the PWM clock 
@@ -136,7 +135,7 @@ void setup() {
 
   const byte pcklPin = 2;
   pinMode(pcklPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, RISING);
+//  attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, RISING);
 }
 
 

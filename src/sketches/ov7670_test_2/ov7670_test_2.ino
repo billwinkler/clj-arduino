@@ -752,6 +752,47 @@ void systemResetCallback()
   isResetting = false;
 }
 
+byte data[128];
+volatile int count = 0;
+uint8_t buf[128];
+uint8_t*b=buf;
+
+  
+void vs_isr () {
+    count = 0;
+  }
+
+void pclk_isr () {
+    //++count;
+    if (count == 0) {
+      data[0] = 1; // vs flag
+    } else {
+      data[0] = 2; // pclk flag
+    }
+
+    *b=buf;
+    //*b++=(PINC&15)|(PIND&240);
+
+    if (count % 16 == 0) {
+      *b=buf; // reset to beginning of buffer
+      }    
+    
+    if (count % 640 == 0) {
+      //data[1] = buf[0] & 0x7F;
+      //data[2] = buf[1] & 0x7F;
+
+      int cnt = count;
+      data[3] = cnt & 0x7F;
+      cnt >>= 7;
+      data[4] = cnt & 0x7F;
+      
+      Firmata.sendSysex(STRING_DATA, 5, data);
+      }
+
+    ++count;;     
+  }
+
+  
 void setup()
 {
 /*==============================================================================
@@ -768,7 +809,7 @@ void setup()
   TCCR2B=(1<<WGM22)|(1<<CS20);
   OCR2A=0; //no pre-scaler (F_CPU)/(2*(X+1))
 
-  sei();//enable interrupts
+  sei();//enable interrupts 
 
  /*==============================================================================
  * Standard Firmata setup
@@ -791,11 +832,33 @@ void setup()
   // However do not do this if you are using SERIAL_MESSAGE
 
   Firmata.begin(57600);
+  
   while (!Serial) {
     ; // wait for serial port to connect. Needed for ATmega32u4-based boards and Arduino 101
   }
 
   systemResetCallback();  // reset to default config
+
+  pinMode(2, INPUT_PULLUP);
+  pinMode(3, INPUT_PULLUP);
+  pinMode(4, INPUT_PULLUP);
+  pinMode(5, INPUT_PULLUP);
+  pinMode(6, INPUT_PULLUP);
+  pinMode(7, INPUT_PULLUP);
+  pinMode(14, INPUT_PULLUP);
+  pinMode(15, INPUT_PULLUP);
+  pinMode(16, INPUT_PULLUP);
+  pinMode(17, INPUT_PULLUP);
+  
+  const byte vs = 3;
+  const byte pclk = 2;
+
+  pinMode(vs, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(vs), vs_isr, FALLING);
+
+  pinMode(pclk, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(pclk), pclk_isr, FALLING);
+
 }
 
 /*==============================================================================
