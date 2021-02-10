@@ -6,6 +6,9 @@
   :dependencies [[org.clojure/clojure "1.10.1"]
                  ;; [clodiuno "0.0.4-SNAPSHOT"]
                  [com.github.billwinkler/clodiuno "0.0.4-with-port-id-fix"]
-                 [org.clojure/core.async "1.3.610"]]
+                 [org.clojure/core.async "1.3.610"]
+;;                 [clojure-interop/java.awt "1.0.5"]
+;;                 [clojure-interop/javax.imageio "1.0.5"]
+                 ]
   :repl-options {:init-ns clj-arduino.core}
   :repositories [["jitpack" "https://jitpack.io"]])

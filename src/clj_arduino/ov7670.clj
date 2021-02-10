@@ -14,6 +14,7 @@
 
 
 (def parameters (atom {:debug #{:printer}}))
+(def img-size {:w 88 :h 144})
 (def accum (atom {}))
 (def board)
 
@@ -53,14 +54,13 @@
 
  (defn as-pixels
    [msg]
+   ;; expected number of pixels per row is 88 for qcif grayscale channel
    (let [pixels (mapv (fn [[lsb msb]] 
                         [(byte lsb) (byte msb) (bit-or (byte lsb) (<<< (byte msb) 7))])
                       (partition 2 msg))]
-     [;;(mapv last pixels)
-      ;; should be the grayscale channel from the YUV encoding
-      (mapv (comp last first) (partition 2 pixels))  
-      ;;(mapv (fn [[lsb msb val]] (format "[%02X %02X %03d]" lsb msb val)) pixels)
-      ]))
+     ;; first word of YUV channel should be grayscale luminance
+     (->> (map (comp last first) (partition 2 pixels))
+          (into-array Byte/TYPE))))
 
  (defn ascii?
    [msg]
@@ -143,12 +143,14 @@
       end (println "end:" end)))
   msg)
 
+
 (defn accumulator
   "compile latest results"
-  [{:keys [last-msg case pixel-cnts line data pixels] :as msg}]
+  [{:keys [last-msg case pixel-cnts line data pixels begin] :as msg}]
   (cond
+    begin (swap! accum assoc :image (make-array Byte/TYPE (:h img-size) (:w img-size)))
     pixel-cnts (swap! accum update-in [:pixel-cnts] merge pixel-cnts)
-    pixels (swap! accum update-in [:image] merge {(-> (str "l" (:line @accum)) keyword) pixels})
+    pixels (swap! accum update :image #(doto % (aset (-> @accum :line dec) pixels)))
     (not-empty last-msg) (swap! accum merge msg)
     :else (swap! accum merge (dissoc msg :last-msg)) )
   msg)
@@ -158,7 +160,7 @@
             (map accumulator)
             (map printer)))
 
-(pipeline 1 out> xform readings>)
+(defonce p (pipeline 1 out> xform readings>))
 
  (defn msg-callback
    [msg]
@@ -302,9 +304,8 @@
   (i2c-init board)
   (enable-scaling)
   (set-video-format :qcif)
-  (pckl-off-when-hblanking))
-
-
+  (pckl-off-when-hblanking)
+  "ok")
 
 
 (comment

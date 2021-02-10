@@ -11,3 +11,8 @@ pom.xml.asc
 /.prepl-port
 .hgignore
 .hg/
+/resources/.DS_Store
+/resources/img_*
+/resources/*.jpg
+src/sketches/ov7670_back/
+src/sketches/ov7670_test_backup/
