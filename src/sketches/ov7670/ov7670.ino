@@ -488,6 +488,13 @@ void send_int(byte flag, long val) {
   Firmata.sendSysex(STRING_DATA, 5, bytes);    
 }
 
+volatile boolean triggered;
+
+int vsdl1 = 99;
+int vsdl2 = 0;
+int pcdl1 = 4;
+int pcdl2 = 0;
+  
 void sysexCallback(byte command, byte argc, byte *argv)
 {
   byte mode;
@@ -495,7 +502,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
   byte slaveAddress;
   byte data;
   int slaveRegister;
-  unsigned int delayTime;
+  unsigned int delayTime; 
 
   uint8_t buf[177];
   int idx = 0;
@@ -503,14 +510,14 @@ void sysexCallback(byte command, byte argc, byte *argv)
   
   switch (command) {
     case OV7670_COMMAND:
-      Firmata.sendString("Got it");
+      //Firmata.sendString("Got it");
       send_int(0x00, argv[0]);
       
       switch (argv[0]) {
         case 0x01:
            Firmata.sendString("Got 0x01");
            break;      
-        case 0x03: // send the pinc & pind values
+        case 0x02: // send the pinc & pind values
            for (int x = 1; x < 41; x+=4) {
             byte pin_c, pin_d;
             pin_c = PINC;
@@ -526,15 +533,76 @@ void sysexCallback(byte command, byte argc, byte *argv)
            Firmata.sendSysex(STRING_DATA, 41, buf);
            break;
 
-        case 0x04: // send the vs & pckl values
-           for (int x = 1; x < 41; x+=2) {
-            buf[x] = (PIND >> 4) & 1;
-            buf[x+1] = (PIND >> 3) & 1;
-           }
-           buf[0] = 0x04; // flag         
-           Firmata.sendSysex(STRING_DATA, 41, buf);
+        case 0x03: // set case 0x04 delay timers delay
+           Firmata.sendString("Setting case 4 delay timers");
+           // each delay value is represented by 2 bytes: msb, lsb
+           // 16383 is the largest value that will produce an accurate microsecond delay
+           // as such, delay is split between milliseconds, plus micorseconds
+           pcdl1 = (argv[1] << 8) | argv[2];
+           pcdl2 = (argv[3] << 8) | argv[4];
+           vsdl1 = (argv[5] << 8) | argv[6];
+           vsdl2 = (argv[7] << 8) | argv[8];
+           send_int(0x13, pcdl1);
+           send_int(0x23, pcdl2);
+           send_int(0x33, vsdl1);
+           send_int(0x43, vsdl2);           
            break;
            
+        case 0x04: // send a stream of pckl + pind/c values at a given offset from vsync
+           while(!triggered); //wait for fresh vsync
+           while(!(PIND & B00000100));//wait for pckl high
+
+           trigger = micros ();
+           delay(pcdl1);
+           delayMicroseconds(pcdl2);             
+           elapsed = micros() - trigger;
+           
+           for (int x = 1; x < 177; x+=2) {
+            buf[x] = (PIND >> 4) & 1;
+            buf[x+1] = (PINC&15)|(PIND&240);
+           }
+           
+           send_int(0x14, elapsed); // measured pc delay
+                              
+           buf[0] = 0x04; // flag         
+           Firmata.sendSysex(STRING_DATA, 177, buf);
+           break;
+
+/*
+        case 0x04: // send a stream of vs & pckl values
+           while(!(PIND & B00001000));//wait for vs high
+           while((PIND & B00001000));//wait for vs low
+           while(!(PIND & B00000100));//wait for pckl high
+
+           trigger = micros ();
+           delay(pcdl1);
+           delayMicroseconds(pcdl2);             
+           elapsed = micros() - trigger;
+           
+           for (int x = 1; x < 89; x+=1) {
+            buf[x] = (PIND >> 4) & 1;
+           }
+           
+           send_int(0x14, elapsed); // measured pc delay
+           
+           while(!(PIND & B00001000));//wait for vs high
+           while((PIND & B00001000));//wait for vs low   
+
+           trigger = micros ();
+           delay(vsdl1);
+           delayMicroseconds(vsdl2);           
+           elapsed = micros() - trigger;
+           
+           for (int x = 89; x < 177; x+=1) {
+            buf[x] = (PIND >> 3) & 1;
+           }
+
+           send_int(0x24, elapsed); // measured vs delay
+                   
+           buf[0] = 0x04; // flag         
+           Firmata.sendSysex(STRING_DATA, 177, buf);
+           break;
+ */          
          case 0x05: // vs timer
             while(!(PIND & B00001000));//wait for vs high
             while((PIND & B00001000));//wait for vs low
@@ -546,6 +614,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
            break;
            
          case 0x06: // pckl timer
+            // pixel clock is too fast; this probably doesn't report accurate readings
             while(!(PIND & B00000100));//wait for pckl high
             while((PIND & B00000100));//wait for pckl low
             trigger = micros ();
@@ -570,23 +639,28 @@ void sysexCallback(byte command, byte argc, byte *argv)
             send_int(0x17, invalid);                      
             break;       
                                   
-         case 0x08: // try to capture pixels, qcif (176x144)
+         case 0x08: // try to capture pixels, qcif (176x144), qqcif (88x72) 
             lines = 0;
             buf[0] = 0x08;
-            while(!(PIND & B00001000));//wait for vs high
+            while(!triggered); //wait for fresh vsync
+            ////while(!(PIND & B00001000));//wait for vs high
             trigger = micros ();
             send_int(0x18, 0); // send start of frame
-            while((PIND & B00001000)); //wait for vs low
-            for (int j=0; j < 144; j++) {
-              if ((PIND & B00001000)) {
+            //while((PIND & B00001000)); //wait for vs low
+            // 72 => 37 seen on Saleae
+            for (int j=0; j < 37; j++) {
+              if (!triggered) {
                 // break out of the line loop if vs goes high
+                Firmata.sendString("vsync toggled in outer loop");
                 break;
               }
               send_int(0x28, ++lines);
               while(!(PIND & B00000100));//wait for pckl high
-              for (int i = 1; i < 177; i++) {
-                if ((PIND & B00001000)) {
+              // 89 => 7 (6 pckl toggles per row on Saleae)
+              for (int i = 1; i < 7; i++) {
+                if (!triggered) {
                   // break out of the row loop if vs goes high
+                  Firmata.sendString("vsync toggled in inner loop");
                   break;
                 }
                 if(!(PIND & B00000100)) {
@@ -598,7 +672,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 }
 
               } // end of 1 line        
-              Firmata.sendSysex(STRING_DATA, 177, buf);
+              Firmata.sendSysex(STRING_DATA, 7, buf);
             } // end of all lines
 
             elapsed = micros() - trigger;
@@ -910,104 +984,21 @@ void stringCallback(char *myString)
   Firmata.sendString(myString);
 }
 
-volatile unsigned long triggerTime;
-volatile boolean triggered;
-uint8_t measurements = 0;
+//
 
-volatile boolean write_to_1;
-volatile uint16_t bcnt = 0;
+//uint8_t measurements = 0;
 
-uint8_t buf1[640];
-uint8_t buf2[640];
-volatile int idx = 0;
+//volatile boolean write_to_1;
+//volatile uint16_t bcnt = 0;
 
-void pclk () 
-{
-  if (!triggered)
-    return;
-    
-  // write the data to the active buffer
-  if (write_to_1) {
-    buf1[idx++] = (PINC&15)|(PIND&240);
-  } else {
-    buf2[idx++] = (PINC&15)|(PIND&240);
-  }
-  
-  if (idx >= sizeof(buf1)) {
-    idx = 0;
-    // increment buffer counter
-    ++bcnt;
-    write_to_1 = !write_to_1; 
-  }
+//uint8_t buf1[640];
+//uint8_t buf2[640];
+//volatile int idx = 0;
 
-  // 6200 buffers at 64 bytes per buffer
-  
-  if (bcnt > 6200) {
-    triggered = false;
-  }
-}  // end of pclk
+void vsync () {
+  triggered = !triggered;
+} // end of vsync
 
- /* approximately 0.25 microseconds per pixel clock cycle
-   * 0.16ms per row => 640 ticks 
-   * 36 microsecond gap between rows => 144 ticks
-   * 99 ms per vsync => 396000 ticks
-   * 3.3 ms gap before first row => 13,200 ticks
-   * 1.96 ms gap after last row => 7840 ticks
-   * 480 rows, 784 ticks per row => 376320 ticks 
-   * 376320 + 13200 + 7840 => 397360 ticks per frame, at 0.25 us => ~99.3ms per frame
-   * 64 bytes per buffer => ~6200 buffers per frame
-   * you can ignore the first 205
-   */
-void captureFrm () {
-  while(!(PIND & B00001000));//wait for vs high
-  idx = 0;
-  bcnt = 0;
-  write_to_1 = true;
-  while((PIND & B00001000));//wait for vs low
-  triggerTime = micros ();
-  triggered = true;
-    
-  while(bcnt < 206); // wait for first data buffer
-  while(bcnt < 300);
-  // just testing
-  uint16_t last_bcnt = bcnt;
-
-  /*
-  while(bcnt < 210) {
-    Serial.print( bcnt );
-    Serial.print( " " );
- */ 
-//    while(bcnt == last_bcnt); // wait for next buffer
-//    last_bcnt = bcnt; 
-//  }
-  
-  for (int j = 0; j < 10; j++) {
-  
-
-  Serial.print( bcnt );
-
-
-  //int limit = sizeof(buf1);
-  int limit = 2;
-  
-  if (write_to_1) {
-    Serial.print( " 2 " );
-    for (int x = 0; x < limit; x++) {
-    //pr_data(buf2[x]);   
-    } 
-    Serial.println();
-  } else {
-    Serial.print( " 1 " );
-    for (int x = 0; x < limit; x++) {
-    //pr_data(buf1[x]);      
-    }
-    Serial.println();
-  }
-
-  } // outer loop
-
-  triggered = false;
-} //end captureFrm
   
 void setup()
 {
@@ -1062,9 +1053,9 @@ void setup()
   DDRC&=~15;//low d0-d3 camera
   DDRD&=~252;//d7-d4 and interrupt pins
 
-  const byte pcklPin = 2;
-  pinMode(pcklPin, INPUT_PULLUP);
-  //attachInterrupt(digitalPinToInterrupt(pcklPin), pclk, RISING);
+  const byte vsyncPin = 3;
+  pinMode(vsyncPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(vsyncPin), vsync, RISING);
 
 
 }
