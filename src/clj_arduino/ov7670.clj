@@ -15,12 +15,13 @@
 
 (def parameters (atom {:debug #{:printer}}))
 ;;(def img-size {:w 88 :h 144}) qcif
-(def img-size {:w 44 :h 72}) ;; qqcif
-(def img-size {:w 3 :h 37}) ;; qqcif, observed on Saleae
+;;(def img-size {:w 44 :h 72}) ;; qqcif
+;;(def img-size {:w 3 :h 37}) ;; qqcif, observed on Saleae
+(def img-size {:w (/ 304 2) :h 60}) ;; qqvga,
 (def accum (atom {}))
 (def board)
 
-(def ^:private readings> (chan (a/sliding-buffer 10)))
+(def ^:private readings> (chan (a/sliding-buffer 1024)))
 (def ^:private out> (chan (a/sliding-buffer 1)))
 
 (defn- write-bytes [conn & bs]
@@ -74,27 +75,20 @@
   "format the two timing streams
    vs and pckl vals alternate in the raw data stream"
   [msg]
-  (let [bytes (->> (partition 2 msg) (map first) (partition 88))
-        pc (fmt-timing-stream (first bytes))
-        vs (fmt-timing-stream (last bytes))
-        hi (fn [xs] (->> xs (filter (fn [[n v]] (= v 1))) (map first) sort))
-        lo (fn [xs] (->> xs (filter (fn [[n v]] (= v 0))) (map first) sort))]
-    {:pch (hi pc)
-     :pcl (lo pc)
-     :vsh (hi vs)
-     :vsl (lo vs)}))
+  (let [bytes (->> (partition 4 msg))]
+    (->> (mapv (fn [[pclk _ pincd _]] [pclk pincd]) bytes)
+         (remove #(= % [0 0])))))
 
 ;;(cmd :some-timing)
 
 (defn as-pixels
   [msg]
-  ;; expected number of pixels per row is 88 for qcif grayscale channel
   (let [pixels (mapv (fn [[lsb msb]] 
                        [(byte lsb) (byte msb) (- 127 (bit-or (byte lsb) (<<< (byte msb) 7)))])
                      (partition 2 msg))]
     ;; first word of YUV channel should be grayscale luminance
-    (->> (map (comp last first) (partition 2 pixels))
-         (into-array Byte/TYPE))))
+    ;; so, partition 2 drops every other byte, retaining the Y channel, dropping the C channel
+    (->> (map (comp last first) (partition 2 pixels)))))
 
  (defn ascii?
    [msg]
@@ -115,7 +109,7 @@
   (let [secs (quot micros 1000000)
         ms (-> micros (rem 1000000) (quot 1000))
         us (-> micros (rem 1000000) (rem 1000))]
-    (format "%ds %dms %dus" secs ms us)))
+    (format "%ds %dms %dus  -- %d" secs ms us micros)))
 
 (defn decode-as-case
   [msg]
@@ -160,6 +154,7 @@
         flag (first raw)
         data (drop 2 raw)
         msg (hash-map :data data :flag flag)]
+;;    (println "msg flag" flag "msg bytes" (count sysex-string))
     (cond
       (ascii? sysex-string) (assoc msg :last-msg (as-ascii-string sysex-string))
       (= 0x00 flag) (assoc msg :case   (decode-as-int data))
@@ -172,29 +167,33 @@
       (= 0x14 flag) (assoc-in msg [:delay :pc] (decode-as-int data))
       (= 0x24 flag) (assoc-in msg [:delay :vs] (decode-as-int data))
       (= 0x05 flag) (assoc msg :vsync  (decode-as-int data))
+      (= 0x15 flag) (assoc msg :vscnt  (decode-as-int data))
       (= 0x06 flag) (assoc msg :pckl   (decode-as-int data))
       (= 0x07 flag) (assoc-in msg [:pixel-cnts :valid] (decode-as-int data))
       (= 0x17 flag) (assoc-in msg [:pixel-cnts :invalid] (decode-as-int data))
       (= 0x08 flag) (assoc msg :pixels (as-pixels data))
       (= 0x18 flag) (assoc msg :begin true)
       (= 0x28 flag) (assoc msg :line (decode-as-int data))
-      (= 0x38 flag) (assoc msg :end  (decode-as-int data))
+      (= 0x38 flag) (assoc msg :offset (decode-as-int data))
+      (= 0x48 flag) (assoc msg :end  (decode-as-int data))
       :else msg)))
 
 (defn printer
   "print some elements of the reading payload"
   [{:keys [flag case vsync pckl begin end last-msg pincd timing delay
-           pcdl1 pcdl2 vsdl1 vsdl2 line pixels] :as msg}]
+           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt] :as msg}]
   (when (and (not-empty msg)
              (debug? :printer))
     (cond
       last-msg (println "response:" last-msg)
       case (println (format "case %d: %s" case (decode-as-case [case])))
       vsync (println (format "vsync %s" (format-micros vsync)))
+      vscnt (println "vsync count" vscnt)
       pckl (println (format "~pixel clock %s" (format-micros pckl)))
       timing (println timing)
-      line  (print line " ")
-;;      pixels (println (mapv long pixels))
+;;      line  (println "> line" line " ")
+;;      offset (println "> off" offset " ")
+;;      pixels (println pixels)
       pcdl1 (println "pckl delay ms" pcdl1)
       pcdl2 (println "pckl delay us" pcdl2)
       vsdl1 (println "vs   delay ms" vsdl1)
@@ -210,11 +209,26 @@
 
 (defn accumulator
   "compile latest results"
-  [{:keys [last-msg case pixel-cnts line data pixels begin] :as msg}]
+  [{:keys [last-msg case pixel-cnts line offset data pixels begin] :as msg}]
   (cond
-    begin (swap! accum assoc :image (make-array Byte/TYPE (:h img-size) (:w img-size)))
+    begin (swap! accum assoc :image (make-array Byte/TYPE (* (:h img-size) (:w img-size))))
     pixel-cnts (swap! accum update-in [:pixel-cnts] merge pixel-cnts)
-    pixels (swap! accum update :image #(doto % (aset (-> @accum :line dec) pixels)))
+    pixels (let [image (:image @accum) ;; last image
+                 pixels (vec pixels) 
+                 line (:line @accum)
+                 offset (:offset @accum)
+                 pos (-> (dec line) (* (:w img-size)) (+ (* offset 49)))
+                 num (count pixels)
+                 _ (println "line" line "offset" offset "pos: " pos "num" num)]
+             ;;             (swap! accum update :image #(doto % (aset pos pixels)))
+             (swap! accum assoc :image 
+                    (amap ^bytes image 
+                          idx 
+                          ret
+                          (cond
+                            (>= idx (+ pos num)) (byte 0)
+                            (< idx pos) (byte (aget image idx))
+                            :else (byte (get pixels (- idx pos)))))))
     (not-empty last-msg) (swap! accum merge msg)
     :else (swap! accum merge (dissoc msg :last-msg)) )
   msg)
@@ -276,6 +290,7 @@
   (open-board)
   (close board)
   (i2c-init board)
+  (qqvga!)
   (qqcif!)
   (pckl-off-when-hblanking)
   (initialize)
@@ -287,8 +302,9 @@
   (cmd :clock-at-8mhz)
   (cmd :vsync-timing)
   ;; [msb, lsb] pc ms delay; pc us; vs ms; vs us 
-  (cmd :timer-delay 0 3 0 0 0 0 0 0)
-  (doseq [_ (range 100)]
+  (doseq [n (range 0 100)]
+    (cmd :timer-delay 0 27 0 n 0 0 0 0)
+    (Thread/sleep 500)
     (cmd :some-timing))
   (cmd :some-pinc-d)
   (cmd :count-pixels)
@@ -469,7 +485,7 @@
   0x11 0x01 0000 0001 CLKRC  No prescaling of the internal clock 
   0x12 0x00 0000 0000 COM7   YUV format
   0x0C 0x0C 0000 1100 COM3   Enable zoom & down sampling
-  0x3E 0x12 0001 0010 COM14  Enable manual scaling, divide PCLK by 4 
+  0x3E 0x12 0001 0010 COM14  Enable DCW & PCLK scaling, divide PCLK by 4 
   0x70 0x3A 0011 1010        Horizontal scaling factor 58
   0x71 0x35 0011 0101        Vertical scaling factor 53
   0x72 0x22 0010 0010        Down sample H&V by 4
@@ -486,6 +502,33 @@
               :x72 (set-register-bits 0x72 0x22)
               :x73 (set-register-bits 0x73 0xF2)            
               :xA2 (set-register-bits 0xA2 0x2A)))
+
+(defn qqvga!
+  "
+  Settings for QQVGA YUV mode  
+
+  REG  VAL  Binary    Reg    Meaning
+  ---- ---- --------- -----  ------------------------------------
+  0x11 0x01 0000 0001 CLKRC  No prescaling of the internal clock 
+  0x12 0x00 0000 0000 COM7   YUV format
+  0x0C 0x04 0000 0100 COM3   Enable down sampling
+  0x3E 0x1A 0001 1010 COM14  Enable manual scaling, divide PCLK by 4
+  0x70 0x3A 0011 1010        Horizontal scaling factor 58
+  0x71 0x35 0011 0101        Vertical scaling factor 53
+  0x72 0x22 0010 0010        Down sample H&V by 4
+  0x73 0xF2 xxx1 0010        Pixel Clock Divider, divide by 4
+  0xA2 0x02 0000 0010        Pixel Clock Delay 2
+"
+  []
+  (sorted-map :x11 (set-register-bits 0x11 0x01)
+              :x12 (set-register-bits 0x12 0x00)
+              :x0C (set-register-bits 0x0C 0x04)
+              :x3E (set-register-bits 0x3E 0x1A)
+              :x70 (set-register-bits 0x70 0x3A)
+              :x71 (set-register-bits 0x71 0x35)
+              :x72 (set-register-bits 0x72 0x22)
+              :x73 (set-register-bits 0x73 0xF2)            
+              :xA2 (set-register-bits 0xA2 0x02)))
 
 (defn initialize
   []

@@ -24,34 +24,32 @@
   (gray-image "resources/img_-8.jpg" -8) ;; off white
   )
 
-(defn- image-size
-  "return width, height"
-  [image]
-  [(alength (aget image 0)) (alength image)])
+;; (defn- image-size
+;;   "return width, height"
+;;   [image]
+;;   [(alength (aget image 0)) (alength image)])
 
-(defn- flatten-img
-  "flatten 2 dimensional image into single dim byte array"
-  [image]
-  (let [[w h] (image-size image)]
-    (loop [i h
-           bytez []]
-      (if (zero? i) (->> bytez flatten (into-array Byte/TYPE))
-          (recur (dec i)
-                 (conj bytez  
-                       (loop [j w
-                              row []]
-                         (if (zero? j) row
-                             (recur (dec j) (conj row (aget image (dec i) (dec j))))))))))))
+;; (defn- flatten-img
+;;   "flatten 2 dimensional image into single dim byte array"
+;;   [image]
+;;   (let [[w h] (image-size image)]
+;;     (loop [i h
+;;            bytez []]
+;;       (if (zero? i) (->> bytez flatten reverse (into-array Byte/TYPE))
+;;           (recur (dec i)
+;;                  (conj bytez  
+;;                        (loop [j w
+;;                               row []]
+;;                          (if (zero? j) row
+;;                              (recur (dec j) (conj row (aget image (dec i) (dec j))))))))))))
 
 
 (defn to-jpg
   "generate a jpg from the image"
   [image path]
-  (let [[w h] (image-size image)
-        image2 (BufferedImage. w h BufferedImage/TYPE_BYTE_GRAY)
-        data (-> image2 .getRaster .getDataBuffer .getData)
-        bytes (flatten-img image)]
-    (System/arraycopy bytes 0 data 0 (alength bytes))
+  (let [image2 (BufferedImage. (img-size :w) (img-size :h) BufferedImage/TYPE_BYTE_GRAY)
+        data (-> image2 .getRaster .getDataBuffer .getData)]
+    (System/arraycopy image 0 data 0 (alength image))
     (ImageIO/write image2, "jpg", (io/file path))))
 
 (comment
