@@ -509,7 +509,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
 
   uint8_t buf[307];
   int idx = 0;
-  long elapsed, pixels, invalid, lines;
+  long elapsed, vstime, pixels, invalid, lines;
   
   switch (command) {
     case OV7670_COMMAND:
@@ -687,22 +687,28 @@ void sysexCallback(byte command, byte argc, byte *argv)
             while(triggered == true); // wait for trigger to reset
             send_int(0x18, 0); // send start of frame
             while(triggered == false); // wait for fresh vsync
-            trigger = micros ();
+            vstime = micros ();
             while(triggered == true) {
               
             // qqvgq 60 lines, 306 pclks per line
             for (int j=0; j < 59; j++) {
               if (!triggered) {
                 // break out of the line loop if vs goes high
+                elapsed = micros() - vstime;
+                send_int(0x58,elapsed);                
                 Firmata.sendString("vsync toggled in outer loop");
                 break;
               }
               send_int(0x28, ++lines);
 
               // expect 304 clocks, 
-              for (int i = 1; i < 305; i++) {
+              trigger = micros ();
+              //for (int i = 1; i < 305; i++) {
+              for (int i = 1; i < 300; i++) {                
                 if (!triggered) {
                   // break out of the row loop if vs goes high
+                  elapsed = micros() - vstime;
+                  send_int(0x58,elapsed);
                   Firmata.sendString("vsync toggled in inner loop");
                   break;
                 }
@@ -710,6 +716,8 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 buf[i] = (PINC&15)|(PIND&240);
                 while(!(PIND & B00000100)); //wait for it to go high
               } // end of line
+              elapsed = micros() - trigger;
+              send_int(0x48,elapsed);
 
               // send the pixels in chunks of less than 100 bytes per message
               // split on even byte boundaries, so that Y channel always
@@ -727,8 +735,8 @@ void sysexCallback(byte command, byte argc, byte *argv)
 
             } // end while vsync frame tiggered
 
-            elapsed = micros() - trigger;
-            send_int(0x48,elapsed);
+            //elapsed = micros() - trigger;
+            //send_int(0x48,elapsed);
            break;
            
          case 0x09: // slow the clock down to 1mhz

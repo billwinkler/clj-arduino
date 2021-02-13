@@ -175,13 +175,14 @@
       (= 0x18 flag) (assoc msg :begin true)
       (= 0x28 flag) (assoc msg :line (decode-as-int data))
       (= 0x38 flag) (assoc msg :offset (decode-as-int data))
-      (= 0x48 flag) (assoc msg :end  (decode-as-int data))
+      (= 0x48 flag) (assoc msg :row  (decode-as-int data))
+      (= 0x58 flag) (assoc msg :end  (decode-as-int data))
       :else msg)))
 
 (defn printer
   "print some elements of the reading payload"
   [{:keys [flag case vsync pckl begin end last-msg pincd timing delay
-           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt] :as msg}]
+           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row] :as msg}]
   (when (and (not-empty msg)
              (debug? :printer))
     (cond
@@ -200,8 +201,9 @@
       vsdl2 (println "vs   delay us" vsdl2)
       delay (println "delay:" delay)
       pincd (println pincd)
-      begin (println "begin:" begin)
-      end (println "end:" end)
+      begin (println "begin image capture")
+      row   (println "line:" (:line @accum) (format-micros row))
+      end   (println "end:" (format-micros end))
       (= flag 0x17) (println "valid/invalid pixel cnts:"
                              (get-in @accum [:pixel-cnts :valid])
                              (get-in msg [:pixel-cnts :invalid]))))
@@ -219,7 +221,8 @@
                  offset (:offset @accum)
                  pos (-> (dec line) (* (:w img-size)) (+ (* offset 49)))
                  num (count pixels)
-                 _ (println "line" line "offset" offset "pos: " pos "num" num)]
+;;                 _ (println "line" line "offset" offset "pos: " pos "num" num)
+                 ]
              ;;             (swap! accum update :image #(doto % (aset pos pixels)))
              (swap! accum assoc :image 
                     (amap ^bytes image 
@@ -283,51 +286,6 @@
   (when more (apply (partial write-bytes board) more))
 
   (write-bytes board END-SYSEX))
-
-(comment
-  @accum
-  (get-in @accum [:image :l144])
-  (open-board)
-  (close board)
-  (i2c-init board)
-  (qqvga!)
-  (qqcif!)
-  (pckl-off-when-hblanking)
-  (initialize)
-  (soft-reset!)
-  (set-image-scaling)
-  (cmd :capture-image)
-  (cmd :test)
-  (cmd :clock-at-1mhz)
-  (cmd :clock-at-8mhz)
-  (cmd :vsync-timing)
-  ;; [msb, lsb] pc ms delay; pc us; vs ms; vs us 
-  (doseq [n (range 0 100)]
-    (cmd :timer-delay 0 27 0 n 0 0 0 0)
-    (Thread/sleep 500)
-    (cmd :some-timing))
-  (cmd :some-pinc-d)
-  (cmd :count-pixels)
-  (cmd :pckl-timing)
-  (cmd :test))
-
-(comment 
-  (i2c-init board)
-  (close board)
-  (read-register 1)
-  ;; video format
-  (read-register 0x12)
-  (enable-scaling)
-  (set-video-format :qcif)
-
-  ;; bit 5 PCLK does not toggle on horizontal blank
-  (read-register 0x15)
-  (i2c-write board i2c-address 0x15 [(bit-set 0 5)])
-
-  (debug! :printer)
-  (debug!)
-
-)
 
 
 (defn- ->bits [i]
@@ -533,11 +491,56 @@
 (defn initialize
   []
   (i2c-init board)
-  (enable-scaling)
-;;  (set-video-format :qcif)
+  (qqvga!)
   (pckl-off-when-hblanking)
+  (cmd :clock-at-1mhz)
   "ok")
 
+(comment
+  @accum
+  (get-in @accum [:image :l144])
+  (open-board)
+  (close board)
+  (initialize)
+  (i2c-init board)
+  (qqvga!)
+  (qqcif!)
+  (pckl-off-when-hblanking)
+  (soft-reset!)
+  (set-image-scaling)
+  (cmd :capture-image)
+  (cmd :test)
+  (cmd :clock-at-1mhz)
+  (cmd :clock-at-8mhz)
+  (cmd :vsync-timing)
+  ;; [msb, lsb] pc ms delay; pc us; vs ms; vs us 
+  (doseq [n (range 0 100)]
+    (cmd :timer-delay 0 27 0 n 0 0 0 0)
+    (Thread/sleep 500)
+    (cmd :some-timing))
+  (cmd :some-pinc-d)
+  (cmd :count-pixels)
+  (cmd :pckl-timing)
+  (cmd :test))
+
+
+(comment 
+  (i2c-init board)
+  (close board)
+  (read-register 1)
+  ;; video format
+  (read-register 0x12)
+  (enable-scaling)
+  (set-video-format :qcif)
+
+  ;; bit 5 PCLK does not toggle on horizontal blank
+  (read-register 0x15)
+  (i2c-write board i2c-address 0x15 [(bit-set 0 5)])
+
+  (debug! :printer)
+  (debug!)
+
+)
 
 (comment
   ;; initialize I2C before doing anything else
