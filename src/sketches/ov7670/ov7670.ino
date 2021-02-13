@@ -509,7 +509,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
 
   uint8_t buf[307];
   int idx = 0;
-  long elapsed, vstime, pixels, invalid, lines;
+  long elapsed, vstime, sndtime, pixels, invalid, lines;
   
   switch (command) {
     case OV7670_COMMAND:
@@ -695,7 +695,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
               if (!triggered) {
                 // break out of the line loop if vs goes high
                 elapsed = micros() - vstime;
-                send_int(0x58,elapsed);                
+                send_int(0x68,elapsed);                
                 Firmata.sendString("vsync toggled in outer loop");
                 break;
               }
@@ -708,7 +708,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 if (!triggered) {
                   // break out of the row loop if vs goes high
                   elapsed = micros() - vstime;
-                  send_int(0x58,elapsed);
+                  send_int(0x68,elapsed);
                   Firmata.sendString("vsync toggled in inner loop");
                   break;
                 }
@@ -717,6 +717,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 while(!(PIND & B00000100)); //wait for it to go high
               } // end of line
               elapsed = micros() - trigger;
+              sndtime = micros ();
               send_int(0x48,elapsed);
 
               // send the pixels in chunks of less than 100 bytes per message
@@ -730,7 +731,10 @@ void sysexCallback(byte command, byte argc, byte *argv)
               }
                 send_int(0x38, chunk); // send the offset
                 buf[293] = 0x08;
-                Firmata.sendSysex(STRING_DATA, 11, &buf[293]);  // [294:304]            
+                Firmata.sendSysex(STRING_DATA, 11, &buf[293]);  // [294:304]
+
+                elapsed = micros() - sndtime;
+                send_int(0x58,elapsed);                
             } // end of all lines
 
             } // end while vsync frame tiggered

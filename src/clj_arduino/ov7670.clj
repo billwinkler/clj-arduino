@@ -173,16 +173,17 @@
       (= 0x17 flag) (assoc-in msg [:pixel-cnts :invalid] (decode-as-int data))
       (= 0x08 flag) (assoc msg :pixels (as-pixels data))
       (= 0x18 flag) (assoc msg :begin true)
-      (= 0x28 flag) (assoc msg :line (decode-as-int data))
+      (= 0x28 flag) (assoc msg :line   (decode-as-int data))
       (= 0x38 flag) (assoc msg :offset (decode-as-int data))
-      (= 0x48 flag) (assoc msg :row  (decode-as-int data))
-      (= 0x58 flag) (assoc msg :end  (decode-as-int data))
+      (= 0x48 flag) (assoc msg :row    (decode-as-int data))
+      (= 0x58 flag) (assoc msg :sndtm  (decode-as-int data))
+      (= 0x68 flag) (assoc msg :end    (decode-as-int data))
       :else msg)))
 
 (defn printer
   "print some elements of the reading payload"
   [{:keys [flag case vsync pckl begin end last-msg pincd timing delay
-           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row] :as msg}]
+           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row sndtm] :as msg}]
   (when (and (not-empty msg)
              (debug? :printer))
     (cond
@@ -203,6 +204,7 @@
       pincd (println pincd)
       begin (println "begin image capture")
       row   (println "line:" (:line @accum) (format-micros row))
+      sndtm (println "firmata send overhead:" (format-micros sndtm))
       end   (println "end:" (format-micros end))
       (= flag 0x17) (println "valid/invalid pixel cnts:"
                              (get-in @accum [:pixel-cnts :valid])
