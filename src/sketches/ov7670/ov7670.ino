@@ -507,7 +507,8 @@ void sysexCallback(byte command, byte argc, byte *argv)
   int slaveRegister;
   unsigned int delayTime; 
 
-  uint8_t buf[307];
+  //uint8_t buf[307];
+  uint8_t buf[18300];
   int idx = 0;
   long elapsed, vstime, sndtime, pixels, invalid, lines;
   
@@ -679,8 +680,59 @@ void sysexCallback(byte command, byte argc, byte *argv)
             send_int(0x07, pixels);
             send_int(0x17, 0); // dummy invalid count                     
             break;                     
+
+         case 0x08: // try to capture pixels, qcif (176x144), qqcif (88x72), qqvga (150 x 60) 
+            lines = 1;
+            while(triggered == true); // wait for trigger to reset
+            send_int(0x18, 0); // send start of frame
+            while(triggered == false); // wait for fresh vsync
+            vstime = micros ();
+            while(triggered == true) {             
+            // qqvgq 60 lines, 305 pclks per line
+              for (int i = 1; i < 18300; i++) {                
+                if (!triggered) {
+                  // break out of the row loop if vs goes high
+                  elapsed = micros() - vstime;
+                  send_int(0x68,elapsed);
+                  Firmata.sendString("vsync toggled inside capture loop");
+                  break;
+                }
+                while((PIND & B00000100)); //wait for it to go low
+                //buf[i] = (PINC&15)|(PIND&240);
+                while(!(PIND & B00000100)); //wait for it to go high
+               } // end of frame
+
+              send_int(0x28, 1); //TODO fix this (sending a fake line 1) 
+              elapsed = micros() - trigger;
+              sndtime = micros ();
+              send_int(0x48,elapsed);
+
+              // send the pixels in chunks of less than 100 bytes per message
+              // split on even byte boundaries (98), so that Y channel always
+              // appears as the first byte of each buffer
+              int chunk = 0; 
+              /*
+              for (int k=0; k<18300; k+=98) {
+                send_int(0x38, chunk++); // send the offset
+                buf[k] = 0x08;
+                Firmata.sendSysex(STRING_DATA, 99, &buf[k]);  // [0:98] [98:195] [196:293]...[18130:18227]
+              }
+                send_int(0x38, chunk); // send the offset
+                // next chunk should be 186, at offset of 18228, with 72 more bytes to go
+                buf[293] = 0x08;
+                Firmata.sendSysex(STRING_DATA, 73, &buf[18227]);  // [18228:18300]
+*/
+                elapsed = micros() - sndtime;
+                send_int(0x58,elapsed);                
+
+            } // end while vsync frame tiggered
+
+            //elapsed = micros() - trigger;
+            //send_int(0x48,elapsed);
+           break;
+
                                   
-                                  
+/*                                  
          case 0x08: // try to capture pixels, qcif (176x144), qqcif (88x72), qqvga (150 x 60) 
             lines = 0;
             //buf[0] = 0x08;
@@ -742,7 +794,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
             //elapsed = micros() - trigger;
             //send_int(0x48,elapsed);
            break;
-           
+*/           
          case 0x09: // slow the clock down to 1mhz
            Firmata.sendString("1mhz");
            cli();//disable interrupts
