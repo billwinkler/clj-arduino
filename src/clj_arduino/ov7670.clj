@@ -22,7 +22,7 @@
 (def accum (atom {}))
 (def board)
 
-(def ^:private readings> (chan (a/sliding-buffer 1024)))
+(def ^:private readings> (chan (a/sliding-buffer 20000)))
 (def ^:private out> (chan (a/sliding-buffer 1)))
 
 (defn- write-bytes [conn & bs]
@@ -143,18 +143,22 @@
                      (partition 2 msg))]
     (->> (map last pixels))))
 
- (defn ascii?
+#_(defn as-pixels
+  [msg]
+  (mapv #(- 127 %) msg))
+
+(defn ascii?
    [msg]
    (->> (partition 2 msg) (map (comp long first)) (every? #(< 0x19 % 0x7f))))
 
- (defn as-ascii-string
+(defn as-ascii-string
    [msg]
    (->> (partition 2 msg) (map first) (apply str)))
 
- (defn decode-as-int
-   [msg]
-   (let [[b0 b1 b2 b3] (->> (map byte msg) (partition 2) (map first))]
-     (+ b0 (<<< b1 7) (<<< b2 14) (<<< b3 21))))
+(defn decode-as-int
+  [msg]
+  (let [[b0 b1 b2 b3] (->> (map byte msg) (partition 2) (map first))]
+    (+ b0 (<<< b1 7) (<<< b2 14) (<<< b3 21))))
 
 (defn format-micros
   "format microseconds as secs, ms, us"
@@ -166,7 +170,7 @@
 
 
 
- (defn pincd-callback
+(defn pincd-callback
    [msg]
    (mapv (fn [[m0 m1 m2 m3]]
            [(bits (bit-or (bit-and (<<< m0 4) 0xf0) (bit-and m1 0x0f)))
@@ -238,7 +242,7 @@
       timing (println timing)
 ;;      line  (println "> line" line " ")
 ;;      offset (println "> off" offset " ")
-;;      pixels (println pixels)
+      pixels (println (count pixels) "pixels captured")
       pcdl1 (println "pckl delay ms" pcdl1)
       pcdl2 (println "pckl delay us" pcdl2)
       vsdl1 (println "vs   delay ms" vsdl1)
@@ -263,21 +267,14 @@
     begin (swap! accum assoc :image (make-array Byte/TYPE (* (:h img-size) (:w img-size))))
     pixel-cnts (swap! accum update-in [:pixel-cnts] merge pixel-cnts)
     pixels (let [image (:image @accum) ;; last image
-                 pixels (vec pixels) 
-                 line (:line @accum)
-                 pos (-> (dec line) (* (:w img-size)))
-                 num (count pixels)
-;;                 _ (println "line" line "offset" offset "pos: " pos "num" num)
-                 ]
-             ;;             (swap! accum update :image #(doto % (aset pos pixels)))
+                 pixels (vec pixels)]
              (swap! accum assoc :image 
                     (amap ^bytes image 
                           idx 
                           ret
                           (cond
-                            (>= idx (+ pos num)) (byte 0)
-                            (< idx pos) (byte (aget image idx))
-                            :else (byte (get pixels (- idx pos)))))))
+                            (>= idx (count pixels)) (byte 0) ;; pad with zeros
+                            :else (byte (get pixels idx))))))
     (not-empty last-msg) (swap! accum merge msg)
     :else (swap! accum merge (dissoc msg :last-msg)) )
   msg)
