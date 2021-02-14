@@ -30,6 +30,49 @@
       (.write out b))
     (.flush out)))
 
+
+(defn decode-as-case
+  [msg]
+  (case (-> msg first short)
+    1 "confirm case statement"
+    2 "pinc & d, 4bit per byte"
+    3 "set pixel clock and vsync timer delays"
+    4 "88 bytes of vs, pckl flags"
+    5 "vs time in microseconds"
+    6 "pckl time in microseconds"
+    7 "captured pixel counts"
+    8 "data"
+    9 "reset clock at 1mhz"
+    10 "restore clock to 8mhz"
+    11 "testing firmata string data"
+    nil))
+
+(def cmds {:test          0x01
+           :some-pinc-d   0x02
+           :timer-delay   0x03
+           :some-timing   0x04
+           :vsync-timing  0x05
+           :pckl-timing   0x06
+           :count-pixels  0x07
+           :capture-image 0x08
+           :clock-at-1mhz 0x09
+           :clock-at-8mhz 0x0A
+           :send-bytes    0x0B})
+
+(defn cmd
+  "send instruction to the firmata controller"
+  [command & more]
+
+  (doto board
+    (write-bytes START-SYSEX
+                 OV7670-COMMAND
+                 (command cmds)))
+
+  (when more (apply (partial write-bytes board) more))
+
+  (write-bytes board END-SYSEX))
+
+
 (defn- lsb [b]
   (bit-and b 0x7F))
 
@@ -111,20 +154,7 @@
         us (-> micros (rem 1000000) (rem 1000))]
     (format "%ds %dms %dus  -- %d" secs ms us micros)))
 
-(defn decode-as-case
-  [msg]
-  (case (-> msg first short)
-    1 "confirm case statement"
-    2 "pinc & d, 4bit per byte"
-    3 "set pixel clock and vsync timer delays"
-    4 "88 bytes of vs, pckl flags"
-    5 "vs time in microseconds"
-    6 "pckl time in microseconds"
-    7 "captured pixel counts"
-    8 "data"
-    9 "reset clock at 1mhz"
-    10 "restore clock to 8mhz"
-    nil))
+
 
  (defn pincd-callback
    [msg]
@@ -178,12 +208,14 @@
       (= 0x48 flag) (assoc msg :row    (decode-as-int data))
       (= 0x58 flag) (assoc msg :sndtm  (decode-as-int data))
       (= 0x68 flag) (assoc msg :end    (decode-as-int data))
+      (= 0x0B flag) (assoc msg :caseb  (count data))
       :else msg)))
 
 (defn printer
   "print some elements of the reading payload"
   [{:keys [flag case vsync pckl begin end last-msg pincd timing delay
-           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row sndtm] :as msg}]
+           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row sndtm
+           caseb] :as msg}]
   (when (and (not-empty msg)
              (debug? :printer))
     (cond
@@ -206,6 +238,7 @@
       row   (println "line:" (:line @accum) (format-micros row))
       sndtm (println "firmata send overhead:" (format-micros sndtm))
       end   (println "end:" (format-micros end))
+      caseb (println "bytes received" caseb)
       (= flag 0x17) (println "valid/invalid pixel cnts:"
                              (get-in @accum [:pixel-cnts :valid])
                              (get-in msg [:pixel-cnts :invalid]))))
@@ -262,32 +295,6 @@
        (constantly
         (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler)))
       firmware))
-
-
-
-(def cmds {:test          0x01
-           :some-pinc-d   0x02
-           :timer-delay   0x03
-           :some-timing   0x04
-           :vsync-timing  0x05
-           :pckl-timing   0x06
-           :count-pixels  0x07
-           :capture-image 0x08
-           :clock-at-1mhz 0x09
-           :clock-at-8mhz 0x0A})
-
-(defn cmd
-  "send instruction to the firmata controller"
-  [command & more]
-
-  (doto board
-    (write-bytes START-SYSEX
-                 OV7670-COMMAND
-                 (command cmds)))
-
-  (when more (apply (partial write-bytes board) more))
-
-  (write-bytes board END-SYSEX))
 
 
 (defn- ->bits [i]
@@ -511,6 +518,7 @@
   (soft-reset!)
   (set-image-scaling)
   (cmd :capture-image)
+  (cmd :send-bytes)
   (cmd :test)
   (cmd :clock-at-1mhz)
   (cmd :clock-at-8mhz)
