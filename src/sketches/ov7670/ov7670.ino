@@ -719,9 +719,9 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 while(!(PIND & B00000100)); //wait for it to go high
               } // end of line
               // send the line pixels
-              for (int i=50; i < 250; i+=2) {
+              for (int i=25; i < 125; i++) {
                 Serial.write(buf[i] & 0x7f);
-                Serial.write(buf[i+1] >> 7);
+                Serial.write(buf[i] >> 7);
               } 
             } // end of all lines
             } // end frame

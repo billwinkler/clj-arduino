@@ -525,7 +525,7 @@
   (pckl-off-when-hblanking)
   (soft-reset!)
   (set-image-scaling)
-  (cmd :capture-image) 
+  (cmd :capture-image)  
   (cmd :send-bytes)
   (cmd :test)
   (cmd :uart-test)
