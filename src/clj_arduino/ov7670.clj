@@ -17,7 +17,8 @@
 ;;(def img-size {:w 88 :h 144}) qcif
 ;;(def img-size {:w 44 :h 72}) ;; qqcif
 ;;(def img-size {:w 3 :h 37}) ;; qqcif, observed on Saleae
-(def img-size {:w (/ 304 2) :h 60}) ;; qqvga,
+;; 160x120x2 frame (QQVGA)
+(def img-size {:w 151 :h 60}) ;; qqvga, YUV gray scale pixels
 (def accum (atom {}))
 (def board)
 
@@ -45,6 +46,7 @@
     9 "reset clock at 1mhz"
     10 "restore clock to 8mhz"
     11 "testing firmata string data"
+    12 "testing direct uart send"
     nil))
 
 (def cmds {:test          0x01
@@ -57,7 +59,8 @@
            :capture-image 0x08
            :clock-at-1mhz 0x09
            :clock-at-8mhz 0x0A
-           :send-bytes    0x0B})
+           :send-bytes    0x0B
+           :uart-test     0x0C})
 
 (defn cmd
   "send instruction to the firmata controller"
@@ -124,7 +127,7 @@
 
 ;;(cmd :some-timing)
 
-(defn as-pixels
+#_(defn as-pixels
   [msg]
   (let [pixels (mapv (fn [[lsb msb]] 
                        [(byte lsb) (byte msb) (- 127 (bit-or (byte lsb) (<<< (byte msb) 7)))])
@@ -132,6 +135,13 @@
     ;; first word of YUV channel should be grayscale luminance
     ;; so, partition 2 drops every other byte, retaining the Y channel, dropping the C channel
     (->> (map (comp last first) (partition 2 pixels)))))
+
+(defn as-pixels
+  [msg]
+  (let [pixels (mapv (fn [[lsb msb]] 
+                       [(byte lsb) (byte msb) (- 127 (bit-or (byte lsb) (<<< (byte msb) 7)))])
+                     (partition 2 msg))]
+    (->> (map last pixels))))
 
  (defn ascii?
    [msg]
@@ -204,18 +214,19 @@
       (= 0x08 flag) (assoc msg :pixels (as-pixels data))
       (= 0x18 flag) (assoc msg :begin true)
       (= 0x28 flag) (assoc msg :line   (decode-as-int data))
-      (= 0x38 flag) (assoc msg :offset (decode-as-int data))
+;;      (= 0x38 flag) (assoc msg :offset (decode-as-int data))
       (= 0x48 flag) (assoc msg :row    (decode-as-int data))
       (= 0x58 flag) (assoc msg :sndtm  (decode-as-int data))
       (= 0x68 flag) (assoc msg :end    (decode-as-int data))
       (= 0x0B flag) (assoc msg :caseb  (count data))
+      (= 0x0C flag) (assoc msg :casec (as-hex-array data))
       :else msg)))
 
 (defn printer
   "print some elements of the reading payload"
   [{:keys [flag case vsync pckl begin end last-msg pincd timing delay
            pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row sndtm
-           caseb] :as msg}]
+           caseb casec] :as msg}]
   (when (and (not-empty msg)
              (debug? :printer))
     (cond
@@ -239,6 +250,7 @@
       sndtm (println "firmata send overhead:" (format-micros sndtm))
       end   (println "end:" (format-micros end))
       caseb (println "bytes received" caseb)
+      casec (println "bytes received" casec)
       (= flag 0x17) (println "valid/invalid pixel cnts:"
                              (get-in @accum [:pixel-cnts :valid])
                              (get-in msg [:pixel-cnts :invalid]))))
@@ -253,8 +265,7 @@
     pixels (let [image (:image @accum) ;; last image
                  pixels (vec pixels) 
                  line (:line @accum)
-                 offset (:offset @accum)
-                 pos (-> (dec line) (* (:w img-size)) (+ (* offset 49)))
+                 pos (-> (dec line) (* (:w img-size)))
                  num (count pixels)
 ;;                 _ (println "line" line "offset" offset "pos: " pos "num" num)
                  ]
@@ -502,7 +513,7 @@
   (i2c-init board)
   (qqvga!)
   (pckl-off-when-hblanking)
-  (cmd :clock-at-1mhz)
+;;  (cmd :clock-at-1mhz)
   "ok")
 
 (comment
@@ -520,6 +531,7 @@
   (cmd :capture-image)
   (cmd :send-bytes)
   (cmd :test)
+  (cmd :uart-test)
   (cmd :clock-at-1mhz)
   (cmd :clock-at-8mhz)
   (cmd :vsync-timing)
