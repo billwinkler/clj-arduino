@@ -702,7 +702,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
               }
 
               // expect 151 Y bytes per line 
-              for (int i = 0; i < 151; i++) {                
+              for (int i = 0; i < 150; i++) {                
                 if (!triggered) {
                   // break out of the row loop if vs goes high
                   break;
@@ -719,7 +719,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 while(!(PIND & B00000100)); //wait for it to go high
               } // end of line
               // send the line pixels
-              for (int i=0; i < 302; i+=2) {
+              for (int i=50; i < 250; i+=2) {
                 Serial.write(buf[i] & 0x7f);
                 Serial.write(buf[i+1] >> 7);
               } 
