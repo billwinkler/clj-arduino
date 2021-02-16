@@ -695,7 +695,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
             while(triggered == true) {
             trigger = micros ();              
             // qqvgq 60 lines, 304 pclks per line, 151 Y bytes
-            for (int j=0; j < 59; j++) {
+            for (int j=0; j < 60; j++) {
               if (!triggered) {
                 // break out of the line loop if vs goes high
                break;
@@ -719,7 +719,8 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 while(!(PIND & B00000100)); //wait for it to go high
               } // end of line
               // send the line pixels
-              for (int i=25; i < 125; i++) {
+              //for (int i=25; i < 125; i++) {
+              for (int i=0; i < 150; i++) {
                 Serial.write(buf[i] & 0x7f);
                 Serial.write(buf[i] >> 7);
               } 

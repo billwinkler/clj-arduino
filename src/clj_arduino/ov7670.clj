@@ -18,7 +18,7 @@
 ;;(def img-size {:w 44 :h 72}) ;; qqcif
 ;;(def img-size {:w 3 :h 37}) ;; qqcif, observed on Saleae
 ;; 160x120x2 frame (QQVGA)
-(def img-size {:w 151 :h 60}) ;; qqvga, YUV gray scale pixels
+(def img-size {:w 150 :h 60}) ;; qqvga, YUV gray scale pixels
 (def accum (atom {}))
 (def board)
 
@@ -96,6 +96,30 @@
   (->> (map #(bit-and (bit-shift-right n %) 1) (range 8))
       reverse
       (apply str)))
+
+(defn read-register
+  "get the OV7670 register values as a map"
+  [addr]
+  (i2c-blocking-read board i2c-address addr 1 :timeout 500))
+
+(defn set-register-bits
+  "Update the value stored in a given register, setting the given bits,
+  within a bit range (defaults to a full range of [8 0])"
+  ([reg-addr bits-to-set] (set-register-bits reg-addr bits-to-set [8 0]))
+  ([reg-addr bits-to-set [b1 b0]]
+   (let [[old-val _] (read-register reg-addr)
+         mask (->> (map-indexed (fn [idx n] 
+                                  (let [b (if (>= b1 idx b0) 0 1)]
+                                    (bit-shift-left b n)))
+                                (range 8))
+                   reverse
+                   (reduce bit-or))
+         bits-to-set (or (and (= b1 8) bits-to-set) (bit-shift-left bits-to-set b0))
+         _ (println (format "Addr %02x" reg-addr) 
+                    "from" (bits old-val) "mask" (bits mask) "to" (bits bits-to-set))
+         new-val (bit-or (bit-and old-val mask) bits-to-set)]
+     (i2c-write board i2c-address reg-addr [new-val])
+     [old-val new-val])))
 
  (defn as-hex-array
    [msg]
@@ -309,11 +333,6 @@
   "zero padded bit string"
   (cl-format nil " ~2,'0x ~8,'0b" i i))
 
-(defn read-register
-  "get the OV7670 register values as a map"
-  [addr]
-  (i2c-blocking-read board i2c-address addr 1 :timeout 500))
-
 (defn enable-scaling
   "scaling needs to be enabled for QCIF (176x144) format"
   []
@@ -325,6 +344,16 @@
   "suppresses the pixel clock with not capturing data bits"
   []
   (i2c-write board i2c-address 0x15 [(bit-set 0 5)]))
+
+(defn set-data-format-range
+  "Adjust the pixel value range"
+  [output-range]
+  (let [rng (condp = output-range
+                :x10-0xF0 2r00
+                :x01-0xFE 2r10
+                :x00-0xFF 2r11
+                2r11)]
+    (set-register-bits 0x40 rng [7 6])))
 
 (defn soft-reset!
   "reset registers to default values"
@@ -443,13 +472,7 @@
         [reg _] (read-register register)]
     (i2c-write board i2c-address register [(bit-or reg 2r1010)])))
 
-(defn set-register-bits
-  "Update the value stored in a given register, setting bits in the bit-mask"
-  [reg-addr bit-mask]
-  (let [[old-val _] (read-register reg-addr)
-        new-val (bit-or old-val bit-mask)]
-    (i2c-write board i2c-address reg-addr [new-val])
-    [old-val new-val]))
+
 
 (defn qqcif!
   "
@@ -495,7 +518,9 @@
   0xA2 0x02 0000 0010        Pixel Clock Delay 2
 "
   []
-  (sorted-map :x11 (set-register-bits 0x11 0x01)
+  (sorted-map ;;:x11 (set-register-bits 0x11 0x01)
+;;              :x11 (set-register-bits 0x11 0x05) ;; pre-scale to 3us per tick
+              :x11 (set-register-bits 0x11 0x08) ;; pre-scale to 4.5us per tick
               :x12 (set-register-bits 0x12 0x00)
               :x0C (set-register-bits 0x0C 0x04)
               :x3E (set-register-bits 0x3E 0x1A)
@@ -509,6 +534,7 @@
   []
   (i2c-init board)
   (qqvga!)
+;;  (set-data-format-range :x10-0xF0)
   (pckl-off-when-hblanking)
 ;;  (cmd :clock-at-1mhz)
   "ok")
@@ -525,6 +551,7 @@
   (pckl-off-when-hblanking)
   (soft-reset!)
   (set-image-scaling)
+  (set-register-bits 0x11 0x08)
   (cmd :capture-image)  
   (cmd :send-bytes)
   (cmd :test)

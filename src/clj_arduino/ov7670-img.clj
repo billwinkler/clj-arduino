@@ -48,10 +48,10 @@
   "generate a jpg from the image"
   [image path]
   (let [;;image2 (BufferedImage. (img-size :w) (img-size :h) BufferedImage/TYPE_BYTE_GRAY)
-        image2 (BufferedImage. 100 61 BufferedImage/TYPE_BYTE_GRAY)
+        image2 (BufferedImage. 150 61 BufferedImage/TYPE_BYTE_GRAY)
         data (-> image2 .getRaster .getDataBuffer .getData)]
 ;;    (System/arraycopy image 0 data 0 (alength image))
-    (System/arraycopy image 0 data 0 6100)
+    (System/arraycopy image 0 data 0 9000)
     (ImageIO/write image2, "jpg", (io/file path))))
 
 (comment
