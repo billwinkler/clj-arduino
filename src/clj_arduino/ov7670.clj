@@ -47,6 +47,7 @@
     10 "restore clock to 8mhz"
     11 "testing firmata string data"
     12 "testing direct uart send"
+    13 "testing loop counts"
     nil))
 
 (def cmds {:test          0x01
@@ -60,7 +61,8 @@
            :clock-at-1mhz 0x09
            :clock-at-8mhz 0x0A
            :send-bytes    0x0B
-           :uart-test     0x0C})
+           :uart-test     0x0C
+           :loop-test     0x0D})
 
 (defn cmd
   "send instruction to the firmata controller"
@@ -222,7 +224,6 @@
         flag (first raw)
         data (drop 2 raw)
         msg (hash-map :data data :flag flag)]
-;;    (println "msg flag" flag "msg bytes" (count sysex-string))
     (cond
       (ascii? sysex-string) (assoc msg :last-msg (as-ascii-string sysex-string))
       (= 0x00 flag) (assoc msg :case   (decode-as-int data))
@@ -242,22 +243,24 @@
       (= 0x08 flag) (assoc msg :pixels (as-pixels data))
       (= 0x18 flag) (assoc msg :begin true)
       (= 0x28 flag) (assoc msg :line   (decode-as-int data))
-;;      (= 0x38 flag) (assoc msg :offset (decode-as-int data))
+      ;;      (= 0x38 flag) (assoc msg :offset (decode-as-int data))
       (= 0x48 flag) (assoc msg :row    (decode-as-int data))
       (= 0x58 flag) (assoc msg :sndtm  (decode-as-int data))
       (= 0x68 flag) (assoc msg :end    (decode-as-int data))
       (= 0x0B flag) (assoc msg :caseb  (count data))
       (= 0x0C flag) (assoc msg :casec (as-hex-array data))
+      (= 0x1D flag) (assoc msg :j     (decode-as-int data))
+      (= 0x2D flag) (assoc msg :total (decode-as-int data))
       :else msg)))
 
 (defn printer
   "print some elements of the reading payload"
   [{:keys [flag case vsync pckl begin end last-msg pincd timing delay
            pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row sndtm
-           caseb casec] :as msg}]
+           caseb casec j total] :as msg}]
   (when (and (not-empty msg)
              (debug? :printer))
-    (cond
+     (cond
       last-msg (println "response:" last-msg)
       case (println (format "case %d: %s" case (decode-as-case [case])))
       vsync (println (format "vsync %s" (format-micros vsync)))
@@ -279,6 +282,8 @@
       end   (println "end:" (format-micros end))
       caseb (println "bytes received" caseb)
       casec (println "bytes received" casec)
+      j     (println "j" j)
+      total (println "total" total)
       (= flag 0x17) (println "valid/invalid pixel cnts:"
                              (get-in @accum [:pixel-cnts :valid])
                              (get-in msg [:pixel-cnts :invalid]))))
@@ -541,7 +546,6 @@
 
 (comment
   @accum
-  (get-in @accum [:image :l144])
   (open-board)
   (close board)
   (initialize)
@@ -551,8 +555,9 @@
   (pckl-off-when-hblanking)
   (soft-reset!)
   (set-image-scaling)
-  (set-register-bits 0x11 0x08)
+  (set-register-bits 0x11 0x09)
   (cmd :capture-image)  
+  (cmd :loop-test)  
   (cmd :send-bytes)
   (cmd :test)
   (cmd :uart-test)

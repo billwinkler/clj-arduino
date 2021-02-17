@@ -688,25 +688,14 @@ void sysexCallback(byte command, byte argc, byte *argv)
             Serial.write(STRING_DATA);
             // Send message type
             Serial.write(0x08);           
-            Serial.write(0x00);           
-
-            while(triggered == true); // wait for trigger to reset
-            while(triggered == false); // wait for fresh vsync
-            while(triggered == true) {
+            Serial.write(0x00);
+            while(triggered);  // wait for fresh vsync
+            while(!triggered); // wait for fresh vsync
             trigger = micros ();              
-            // qqvgq 60 lines, 304 pclks per line, 151 Y bytes
-            for (int j=0; j < 60; j++) {
-              if (!triggered) {
-                // break out of the line loop if vs goes high
-               break;
-              }
+            while(triggered) {                       
+            // expect 150 Y bytes per line 
+            for (int i = 0; i < 150; i++) {                
 
-              // expect 151 Y bytes per line 
-              for (int i = 0; i < 150; i++) {                
-                if (!triggered) {
-                  // break out of the row loop if vs goes high
-                  break;
-                }
                 // every other byte is either a Cb or a Cr value followed by a Y byte;
                 // e.g [Cb0 Y0 Cr0 Y1 Cb2 Y2 Cr2 Y3 ...] 
                 // ignore the Cb and Cr bytes
@@ -718,79 +707,22 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 //Serial.write((PINC&15)|(PIND&240));
                 while(!(PIND & B00000100)); //wait for it to go high
               } // end of line
-              // send the line pixels
-              //for (int i=25; i < 125; i++) {
+
+              if (!triggered) {
+                // break out of the loop; discard last captured line if vs goes high
+                break;
+              }
+               // send the line pixels             
               for (int i=0; i < 150; i++) {
                 Serial.write(buf[i] & 0x7f);
                 Serial.write(buf[i] >> 7);
               } 
-            } // end of all lines
             } // end frame
            Serial.write(END_SYSEX);
-
            elapsed = micros() - trigger;
            send_int(0x68,elapsed);
            break;                           
-/*
-         case 0x08: // try to capture the Y channel pixels, qqvga (150 x 60) format 
-            lines = 0;
-            buf[0] = 0x08;
-            while(triggered == true); // wait for trigger to reset
-            send_int(0x18, 0); // send start of frame
-            while(triggered == false); // wait for fresh vsync
-            vstime = micros ();
-            while(triggered == true) {
-              
-            // qqvgq 60 lines, 304 pclks per line, 151 Y bytes
-            for (int j=0; j < 59; j++) {
-              if (!triggered) {
-                // break out of the line loop if vs goes high
-                elapsed = micros() - vstime;
-                send_int(0x68,elapsed);                
-                Firmata.sendString("vsync toggled in outer loop");
-                break;
-              }
-              send_int(0x28, ++lines);
-
-              // expect 151 Y bytes per line 
-              trigger = micros ();
-              for (int i = 1; i < 151; i++) {                
-                if (!triggered) {
-                  // break out of the row loop if vs goes high
-                  elapsed = micros() - vstime;
-                  send_int(0x68,elapsed);
-                  Firmata.sendString("vsync toggled in inner loop");
-                  break;
-                }
-                // every other byte is either a Cb or a Cr value followed by a Y byte;
-                // e.g [Cb0 Y0 Cr0 Y1 Cb2 Y2 Cr2 Y3 ...] 
-                // ignore the Cb and Cr bytes
-                while((PIND & B00000100)); //wait for it to go low
-                while(!(PIND & B00000100)); //wait for it to go high
-                // capture the Y byte                
-                while((PIND & B00000100)); //wait for it to go low
-                buf[i] = (PINC&15)|(PIND&240);
-                while(!(PIND & B00000100)); //wait for it to go high
-
-              } // end of line
-              // measure the overhead
-              //sndtime = micros ();
-
-              //elapsed = micros() - trigger;
-              //send_int(0x48,elapsed);
-              
-              // send the gray scale pixels
-              Firmata.sendSysex(STRING_DATA, 152, &buf[0]);
-              //elapsed = micros() - sndtime;
-              //send_int(0x58,elapsed);                
-            } // end of all lines
-
-            } // end while vsync frame tiggered
-
-            //elapsed = micros() - trigger;
-            //send_int(0x48,elapsed);
-           break;                                 
- */           
+          
          case 0x09: // slow the clock down to 1mhz
            Firmata.sendString("1mhz");
            cli();//disable interrupts
@@ -839,7 +771,43 @@ void sysexCallback(byte command, byte argc, byte *argv)
             Serial.write(9);
            }
            Serial.write(END_SYSEX);        
-           break;                        
+           break;
+ 
+         case 0x0D:
+           Firmata.sendString("Diagnosing off by 1 loop bug");
+           int total = 0;
+           while(triggered);  // wait for fresh vsync
+           while(!triggered); // wait for fresh vsync
+           while(triggered) {
+            trigger = micros ();              
+            // qqvgq 60 lines, 304 pclks per line, 151 Y bytes
+            // expect 151 Y bytes per line 
+              for (int i = 0; i < 150; i++) {                
+                // every other byte is either a Cb or a Cr value followed by a Y byte;
+                // e.g [Cb0 Y0 Cr0 Y1 Cb2 Y2 Cr2 Y3 ...] 
+                // ignore the Cb and Cr bytes
+                while((PIND & B00000100)); //wait for it to go low
+                while(!(PIND & B00000100)); //wait for it to go high
+                // capture the Y byte                
+                while((PIND & B00000100)); //wait for it to go low
+                buf[i] = (PINC&15)|(PIND&240);
+                //Serial.write((PINC&15)|(PIND&240));
+                while(!(PIND & B00000100)); //wait for it to go high
+              } // end of line
+                if (!triggered) {
+                  // break out of the row loop if vs goes high
+                  break;
+                }
+              
+              total += 150;
+              send_int(0x2D, total);
+            } // end frame
+
+           elapsed = micros() - trigger;
+           send_int(0x68,elapsed);
+           send_int(0x2D, total);
+     
+           break;                                      
          }
       return;
       
