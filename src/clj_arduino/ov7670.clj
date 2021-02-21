@@ -104,6 +104,66 @@
   [addr]
   (i2c-blocking-read board i2c-address addr 1 :timeout 500))
 
+(defn- register-bits
+  ([addr] (register-bits addr [7 0]))
+  ([addr [b1 b0] & label]
+   (let [reg (-> addr read-register first)
+         bitz (apply str 
+                     (for [x (range 7 -1 -1)
+                           :let [y (if (>= b1 x b0) 1 0)
+                                 z (bit-and 1 (bit-shift-right reg x))]
+                           :when (pos? y)] z))
+         val (read-string (str "2r" bitz))
+         sval (format "%s 0x%02X  %s[%d:%d]"  bitz val (bits reg) b1 b0)]
+     [val (if-not label sval (-> label first (str " " sval)))])))
+
+(def ^{:doc " 
+OV7670 register coordinates. Entries are one of: 
+  - a register address, 
+  - an address plus slice coordinates, 
+  - or a vector of address names with their corresponding slices"
+       :private true}
+  registers {"AEC"   [["AECHH" [5 0]] ["AECH" [7 0]] ["COM1" [1 0]]]
+             "AECHH"          [0x07]
+             "AECH"           [0x10]
+             "AEB"            [0x25]
+             "AEW"            [0x24]
+             "COM1"           [0x04]
+             "COM4"           [0x0D]
+             "COM7"           [0x12]
+             "COM8"           [0x13]
+             "COM15"          [0x40]
+             "HRL"            [0x9F]
+             "LRL"            [0xA0]
+             "LPH"            [0xA6]
+             "NALG"           [0xAA]
+             "TLH"            [["AEW" [7 4]]]
+             "TLL"            [["AEB" [7 4]]]
+             "UPL"            [0xA7]
+             "VPT"            [0x26]
+             :aec-enable                 [["COM8" [0 0]]]
+             :aec-speed                  [["COM8" [7 7]]]
+             :aec-algorithm              [["NALG" [7 7]]]
+             :control-zone-ul            [["VPT"  [7 4]]]
+             :control-zone-ll            [["VPT"  [3 0]]]
+             :pixel-format               [["COM7" [2 2]] ["COM7" [0 0]] ["COM15" [5 5]] ["COM15" [4 4]]]
+             :stable-operating-region-ul [["AEW"  [7 0]]]
+             :stable-operating-region-ll [["AEB"  [7 0]]]
+             :avg-lum-calc-window        [["COM4" [5 4]]]
+})
+
+(defn register
+  "Get the register value for a given name"
+  [name]
+  (let [[reg & [slice]] (registers name)]
+    (cond 
+      (nil? reg) nil
+      (vector? reg) (-> (map (fn [[nm slice]] (register-bits (-> nm registers first) slice nm)) 
+                             (registers name))
+                        (into (list (str name))))
+      (not-empty slice) (register-bits reg slice name)
+      :else (register-bits reg [7 0] name))) )
+
 (defn set-register-bits
   "Update the value stored in a given register, setting the given bits,
   within a bit range (defaults to a full range of [8 0])"
@@ -117,9 +177,9 @@
                    reverse
                    (reduce bit-or))
          bits-to-set (or (and (= b1 8) bits-to-set) (bit-shift-left bits-to-set b0))
+         new-val (bit-or (bit-and old-val mask) bits-to-set)
          _ (println (format "Addr %02x" reg-addr) 
-                    "from" (bits old-val) "mask" (bits mask) "to" (bits bits-to-set))
-         new-val (bit-or (bit-and old-val mask) bits-to-set)]
+                    "mask" (bits mask) "set" (bits bits-to-set) "from" (bits old-val) "to" (bits new-val))]
      (i2c-write board i2c-address reg-addr [new-val])
      [old-val new-val])))
 
@@ -193,8 +253,6 @@
         ms (-> micros (rem 1000000) (quot 1000))
         us (-> micros (rem 1000000) (rem 1000))]
     (format "%ds %dms %dus  -- %d" secs ms us micros)))
-
-
 
 (defn pincd-callback
    [msg]
@@ -361,38 +419,92 @@
     (set-register-bits 0x40 rng [7 6])))
 
 (defn soft-reset!
-  "reset registers to default values"
+  "reset registers to default values by writing a 1 to COM7[7] (0x12)"
   []
   (i2c-write board i2c-address 0x12 [0x80]))
 
 ;;(read-register 0x0c)
 
-(defn set-video-format
-  "one of :cif, :qcif, :qvga"
-  [fmt]
-  (let [addr 0x12
-        [reg _] (read-register addr)
-        _ (println "reg" (->bits reg))
-        bits (-> reg (bit-and 2r11000111)
-                 (bit-or 
-                  (case fmt
-                    :cif  2r00100000
-                    :qvga 2r00010000
-                    :qcif 2r00001000)))
-        _ (println "bits" (->bits bits))]
-    (i2c-write board i2c-address addr [bits])))
-
-;;(set-video-format :qcif)
-
 (defn pixel-format
-  ""
+  "From section 2 of the implementation guide, the OV7670 has an image
+  array size of 656 columns by 488 rows (320,128) pixels.  The pixel
+  cells themselves are identical, but have RGB color filters arranged
+  to inerpolate each pixels' BG or GR color from the light striking
+  the cell directly, as well as from the light striking the
+  surrounding cells.  The 'Raw Bayer RGB' image does not have any
+  image processing.
+
+  The output pixel configuration is specified via 4 bits taken from
+  the COM7 and COM15 registers:
+
+  Format               |  COM7[2] | COM7[0] | COM15[5] | COM15[4]                     
+  ---------------------+----------+---------+----------+---------
+  Raw Bayer RGB        |     0    |    1    |    x     |    0     
+  Processed Bayer RGB  |     1    |    1    |    x     |    0     
+  YUV/YCbCr 4:2:2      |     1    |    1    |    x     |    0   
+  GRB 4:2:2            |     1    |    0    |    x     |    0       
+  RGB565               |     1    |    0    |    0     |    1
+  RGB555               |     1    |    0    |    1     |    1"
   []
-  (condp = (-> (read-register 0x12) (bit-and 2r00000101))
-    2r00000000 :yuv
-    2r00000100 :rgb
-    2r00000001 :raw-bayer
-    2r00000100 :processed-bayer
-    ))
+  (let [[_ b3 b2 b1 b0] (map first (register :pixel-format))]
+    (case (+ (<<< b3 1) b2)
+      2r01 :raw-bayer-rgb
+      2r11 :processed-bayer-rgb
+      2r00 :yuv-422
+      2r10 (case (+ (<<< b1 1) b0)
+             2r01 :rgb565
+             2r11 :rgb555
+             :grb-422))))
+
+#_(defn exposure-time
+  "Get the current exposure time value. Exposure time is the row
+  interval time multiplied by the automatic exposure control AEC
+  value.  AEC[15:0] is stored in three registers, AECHH[5:0],
+  AECH[7:0], and COM1[1:0].
+
+  Exposure time represents increments of row interval time, which is
+  computed as:
+
+     (* 2 internal-clk (+ 784 dummy-pixels))"
+  []
+  (let [[AECHH _] (read-register 0x07)
+        [AECH  _] (read-register 0x10)
+        [COM1  _] (read-register 0x04)]
+    (println (bits COM1) (bits AECH) (bits AECHH) )
+    (println (bits (bit-and COM1 2r00000011)) (bits AECH) (bits (bit-and AECHH 2r00111111)))
+    (bit-or (bit-and COM1 2r00000011)
+            (bit-shift-left AECH   2)
+            (bit-shift-left (bit-and AECHH 2r00111111) 10))))
+
+(defn exposure-time
+  "Get the current exposure time value. Exposure time is the row
+  interval time multiplied by the automatic exposure control AEC
+  value.  AEC[15:0] is stored in three registers, AECHH[5:0],
+  AECH[7:0], and COM1[1:0].
+
+  Exposure time represents increments of row interval time, which is
+  computed as:
+
+     (* 2 internal-clk (+ 784 dummy-pixels))"
+  []
+  (let [[_ AECHH AECH COM1] (map first (register "AEC"))]
+    (+ (<<< AECHH 10) (<<< AECH 2) COM1)))
+
+(defn exposure-algorithm
+  "There are two exposure algorithms, average based and histogram
+  based."
+  []
+  (let [[_ [alg _]] (register :aec-algorithm)]
+    (case alg
+          0 :avg
+          1 :hist)))
+
+(defn set-exposure-algorithm
+  "There are two exposure algorithms, average based (:avg) and
+  histogram (:hist) based."
+  [algo]
+  (let [[addr] (registers "NALG")]
+    (set-register-bits addr (case algo :avg 0 :hist 1) [7 7])))
 
 (defn set-image-scaling
   "Image Scaling
@@ -551,11 +663,16 @@
   (initialize)
   (i2c-init board)
   (qqvga!)
-  (qqcif!)
-  (pckl-off-when-hblanking)
   (soft-reset!)
-  (set-image-scaling)
-  (set-register-bits 0x11 0x09)
+  (exposure-time)
+  ;; pclk pre-scaller
+  (set-register-bits 0x11 10)
+  ;; MSB, dummy pixel insert
+  (set-register-bits 0x2A 0x00 [7 4])
+  (set-register-bits 0x2B 0x00 [7 0])
+  ;; MSB, dummy lines
+  (set-register-bits 0x2E 0x00 [7 0])
+  (set-register-bits 0x2D 60 [7 0])
   (cmd :capture-image)  
   (cmd :loop-test)  
   (cmd :send-bytes)
