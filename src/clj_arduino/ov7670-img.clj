@@ -62,9 +62,8 @@
         image2 (BufferedImage. w h BufferedImage/TYPE_BYTE_GRAY)
         data (-> image2 .getRaster .getDataBuffer .getData)]
     (System/arraycopy image 0 data 0 (* w h))
-    (Frames/display image2 "title")))
-
-
+    (Frames/display image2 "image capture")
+    "ok"))
 
 (comment
   @accum
@@ -133,7 +132,7 @@
     (set-register-bits REG_HAECC5 0xf0)
     (set-register-bits REG_HAECC6 0x90)
     (set-register-bits REG_HAECC7 0x94)    
-;;    (set-register-bits REG_COM8 (bit-or COM8_FASTAEC COM8_AECSTEP COM8_AGC COM8_AEC))
+    ;;    (set-register-bits REG_COM8 (bit-or COM8_FASTAEC COM8_AECSTEP COM8_AGC COM8_AEC))
     )
 
 

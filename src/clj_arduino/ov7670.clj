@@ -18,12 +18,22 @@
 ;;(def img-size {:w 44 :h 72}) ;; qqcif
 ;;(def img-size {:w 3 :h 37}) ;; qqcif, observed on Saleae
 ;; 160x120x2 frame (QQVGA)
-(def img-size {:w 150 :h 60}) ;; qqvga, YUV gray scale pixels
+(def img-size {:w 150 :h 120}) ;; qqvga, YUV gray scale pixels
 (def accum (atom {}))
 (def board)
 
 (def ^:private readings> (chan (a/sliding-buffer 20000)))
 (def ^:private out> (chan (a/sliding-buffer 1)))
+
+(def ^{:doc " 
+OV7670 register coordinates. Entries are one of: 
+  - a register address, 
+  - an address slice,
+  - or a vector of address slices"
+       :private true}
+  registers (-> "registers.edn" clojure.java.io/resource slurp read-string))
+
+
 
 (defn- write-bytes [conn & bs]
   (let [out (.getOutputStream (:port @conn))]
@@ -116,41 +126,6 @@
          val (read-string (str "2r" bitz))
          sval (format "%s 0x%02X  %s[%d:%d]"  bitz val (bits reg) b1 b0)]
      [val (if-not label sval (-> label first (str " " sval)))])))
-
-(def ^{:doc " 
-OV7670 register coordinates. Entries are one of: 
-  - a register address, 
-  - an address plus slice coordinates, 
-  - or a vector of address names with their corresponding slices"
-       :private true}
-  registers {"AEC"   [["AECHH" [5 0]] ["AECH" [7 0]] ["COM1" [1 0]]]
-             "AECHH"          [0x07]
-             "AECH"           [0x10]
-             "AEB"            [0x25]
-             "AEW"            [0x24]
-             "COM1"           [0x04]
-             "COM4"           [0x0D]
-             "COM7"           [0x12]
-             "COM8"           [0x13]
-             "COM15"          [0x40]
-             "HRL"            [0x9F]
-             "LRL"            [0xA0]
-             "LPH"            [0xA6]
-             "NALG"           [0xAA]
-             "TLH"            [["AEW" [7 4]]]
-             "TLL"            [["AEB" [7 4]]]
-             "UPL"            [0xA7]
-             "VPT"            [0x26]
-             :aec-enable                 [["COM8" [0 0]]]
-             :aec-speed                  [["COM8" [7 7]]]
-             :aec-algorithm              [["NALG" [7 7]]]
-             :control-zone-ul            [["VPT"  [7 4]]]
-             :control-zone-ll            [["VPT"  [3 0]]]
-             :pixel-format               [["COM7" [2 2]] ["COM7" [0 0]] ["COM15" [5 5]] ["COM15" [4 4]]]
-             :stable-operating-region-ul [["AEW"  [7 0]]]
-             :stable-operating-region-ll [["AEB"  [7 0]]]
-             :avg-lum-calc-window        [["COM4" [5 4]]]
-})
 
 (defn register
   "Get the register value for a given name"
@@ -351,7 +326,7 @@ OV7670 register coordinates. Entries are one of:
   "compile latest results"
   [{:keys [last-msg case pixel-cnts line offset data pixels begin] :as msg}]
   (cond
-    begin (swap! accum assoc :image (make-array Byte/TYPE (* (:h img-size) (:w img-size))))
+    begin (swap! accum assoc :image (make-array Byte/TYPE (* (:w img-size) (:h img-size))))
     pixel-cnts (swap! accum update-in [:pixel-cnts] merge pixel-cnts)
     pixels (let [image (:image @accum) ;; last image
                  pixels (vec pixels)]
@@ -456,55 +431,109 @@ OV7670 register coordinates. Entries are one of:
              2r11 :rgb555
              :grb-422))))
 
-#_(defn exposure-time
-  "Get the current exposure time value. Exposure time is the row
-  interval time multiplied by the automatic exposure control AEC
-  value.  AEC[15:0] is stored in three registers, AECHH[5:0],
-  AECH[7:0], and COM1[1:0].
+(defn brightness-level
+  "Read or adjust the brightness level.  Passing no arguments returns
+  the current value of the BRIGHT register.  This register, 0x55, uses
+  bit 7 as a sign bit.  0 is positive, 1 is negative.  A value of 0x00
+  or 0x80 means no brightness adjustment.
 
-  Exposure time represents increments of row interval time, which is
-  computed as:
+  Pass a new value to set a new register value."
+  ([] (register "BRIGHT"))
+  ([adj] (let [[addr] (registers "BRIGHT")]
+           (set-register-bits addr adj)
+           (brightness-level))))
 
-     (* 2 internal-clk (+ 784 dummy-pixels))"
-  []
-  (let [[AECHH _] (read-register 0x07)
-        [AECH  _] (read-register 0x10)
-        [COM1  _] (read-register 0x04)]
-    (println (bits COM1) (bits AECH) (bits AECHH) )
-    (println (bits (bit-and COM1 2r00000011)) (bits AECH) (bits (bit-and AECHH 2r00111111)))
-    (bit-or (bit-and COM1 2r00000011)
-            (bit-shift-left AECH   2)
-            (bit-shift-left (bit-and AECHH 2r00111111) 10))))
+(defn contrast-level
+  "Read or adjust the contrast level.  Passing no arguments returns the
+  current value of the CONTRAS register.  The bigger the value, the
+  higher the contrast.  A value of 0x40 means no contrast adjustment.
+
+  Pass a new value to set a new register value."
+  ([] (register "CONTRAS"))
+  ([adj] (let [[addr] (registers "CONTRAS")]
+           (set-register-bits addr adj)
+           (contrast-level))))
+
+(defn sharpness-mode
+  "Read or adjust the sharpness mode.  Passing no arguments returns the
+  current sharpness mode, otherwise passing `true` or `false` enables
+  or disables automatic sharpness mode."
+  ([] (register :sharpness-mode))
+  ([auto] (let [[[reg slice]] (registers :sharpness-mode)
+                [addr]  (registers reg)]
+            (set-register-bits addr (if auto 1 0) slice)
+            (sharpness-mode))))
+
+(defn sharpness-level
+  "Read or adjust the sharpness level.  Passing no arguments returns the
+  current sharpness mode and value. Sharpness upper and lower limits
+  are used in the automatic sharpness mode.
+
+  Pass a new sharpeness value to override automatic sharpness adjustment"
+  ([] {:mode  (register :sharpness-mode)
+       :level (register :sharpness)
+       :ul    (register :sharpness-ul)
+       :ll    (register :sharpness-ll)})
+  ([adj] (let [[[reg slice]] (registers :sharpness)
+               [addr] (registers reg)]
+           (sharpness-mode false)
+           (set-register-bits addr adj slice)
+           (dissoc (sharpness-level) :ul :ll))))
+
+(defn exposure-mode
+  "Read or adjust the exposure mode.  Passing no arguments returns the
+  current exposure mode, otherwise passing `true` or `false` enables
+  or disables automatic exposure control mode."
+  ([] (register :aec-mode))
+  ([auto] (let [[[reg slice]] (registers :aec-mode)
+                [addr]  (registers reg)]
+            (set-register-bits addr (if auto 1 0) slice)
+            (exposure-mode))))
+
 
 (defn exposure-time
-  "Get the current exposure time value. Exposure time is the row
-  interval time multiplied by the automatic exposure control AEC
-  value.  AEC[15:0] is stored in three registers, AECHH[5:0],
-  AECH[7:0], and COM1[1:0].
+  "Get the current exposure time value. 
+
+  Exposure time is the row interval time multiplied by the automatic
+  exposure control AEC value.  
+
+  AEC[15:0] is stored in three registers, AECHH[5:0], AECH[7:0], and
+  COM1[1:0].
 
   Exposure time represents increments of row interval time, which is
   computed as:
 
-     (* 2 internal-clk (+ 784 dummy-pixels))"
-  []
-  (let [[_ AECHH AECH COM1] (map first (register "AEC"))]
-    (+ (<<< AECHH 10) (<<< AECH 2) COM1)))
+     (* 2 internal-clk (+ 784 dummy-pixels))
+
+  A single row interval time unit, at 8mhz clock (2 us per cycle) is
+  3.136 ms."
+
+  ([]
+   (let [[_ AECHH AECH COM1] (map first (register "AEC"))
+         aec (+ (<<< AECHH 10) (<<< AECH 2) COM1)]
+     [aec (format-micros (* aec (* 2 2 784)))]))
+  ([value]
+   ;;[(>>> value 10) (>>> (bit-and value 0x3FC) 2) (bit-and value 0x03)]
+   (exposure-mode false)
+   (let [[[r1 r1-slice] [r2 r2-slice] [r3 r3-slice]] (registers "AEC")
+         [r1-addr r2-addr r3-addr] (map (comp first registers) [r1 r2 r3])]
+     [r1 r1-addr r1-slice r2 r2-addr r2-slice r3 r3-addr r3-slice]
+     (set-register-bits r1-addr (>>> value 10) r1-slice)
+     (set-register-bits r2-addr (>>> (bit-and value 0x3FC) 2) r2-slice)
+     (set-register-bits r3-addr (bit-and value 0x03) r3-slice)
+     (exposure-time))))
 
 (defn exposure-algorithm
-  "There are two exposure algorithms, average based and histogram
-  based."
-  []
-  (let [[_ [alg _]] (register :aec-algorithm)]
-    (case alg
-          0 :avg
-          1 :hist)))
-
-(defn set-exposure-algorithm
   "There are two exposure algorithms, average based (:avg) and
-  histogram (:hist) based."
-  [algo]
-  (let [[addr] (registers "NALG")]
-    (set-register-bits addr (case algo :avg 0 :hist 1) [7 7])))
+  histogram (:hist) based. Pass no arguments to read the current value
+  or one of :avg or :hist to change it."
+  ([] (let [[_ [alg _]] (register :aec-algorithm)]
+        (case alg 0 :avg 1 :hist)))
+  ([algo]
+   (let [[[reg slice]] (registers :aec-algorithm)
+         [addr] (registers reg)]
+     (set-register-bits addr (case algo :avg 0 :hist 1 0) slice)
+     (exposure-algorithm))))
 
 (defn set-image-scaling
   "Image Scaling
@@ -635,9 +664,10 @@ OV7670 register coordinates. Entries are one of:
   0xA2 0x02 0000 0010        Pixel Clock Delay 2
 "
   []
-  (sorted-map ;;:x11 (set-register-bits 0x11 0x01)
-;;              :x11 (set-register-bits 0x11 0x05) ;; pre-scale to 3us per tick
-              :x11 (set-register-bits 0x11 0x08) ;; pre-scale to 4.5us per tick
+  (sorted-map ;;:x11 (set-register-bits 0x11 0x01) ;; 2us per cycle
+;;              :x11 (set-register-bits 0x11 0x05) ;; 6us per cycle
+;;              :x11 (set-register-bits 0x11 0x08) ;; 9us per cycle
+              :x11 (set-register-bits 0x11 0x11) ;; 18us per cycle
               :x12 (set-register-bits 0x12 0x00)
               :x0C (set-register-bits 0x0C 0x04)
               :x3E (set-register-bits 0x3E 0x1A)
