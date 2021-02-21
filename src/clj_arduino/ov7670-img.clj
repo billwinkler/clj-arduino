@@ -3,7 +3,8 @@
   (:require [clojure.java.io :as io]
             [clodiuno.core :refer [close]])
   (:import [java.awt.image BufferedImage DataBufferByte]
-           [javax.imageio ImageIO]))
+           [javax.imageio ImageIO]
+           [mikera.gui Frames]))
 
 (defn gray-image
   "for testing"
@@ -53,6 +54,17 @@
 ;;    (System/arraycopy image 0 data 0 (alength image))
     (System/arraycopy image 0 data 0 9000)
     (ImageIO/write image2, "jpg", (io/file path))))
+
+(defn show
+  "Display an image"
+  [image]
+  (let [[w h] [(img-size :w) (img-size :h)]
+        image2 (BufferedImage. w h BufferedImage/TYPE_BYTE_GRAY)
+        data (-> image2 .getRaster .getDataBuffer .getData)]
+    (System/arraycopy image 0 data 0 (* w h))
+    (Frames/display image2 "title")))
+
+
 
 (comment
   @accum
@@ -162,6 +174,7 @@
   (set-register-bits 0x11 11)
   (cmd :capture-image)
   (exposure-time)
+  (show (@accum :image))
   (to-jpg (:image @accum) "resources/ov7670_8mhz_light.jpg")
   (cmd :some-pinc-d)
   (cmd :clock-at-1mhz)
