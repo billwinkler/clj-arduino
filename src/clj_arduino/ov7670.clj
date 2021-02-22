@@ -454,13 +454,19 @@ OV7670 register coordinates. Entries are one of:
            (set-register-bits addr adj)
            (contrast-level))))
 
+(defn- reg->addr-coords
+  "Extract the address and bit slice values for a given pseudo register name"
+  [name]
+  (for [[rn slice] (registers name)
+      :let [[addr] (registers rn)]]
+  [rn addr slice]))
+
 (defn sharpness-mode
   "Read or adjust the sharpness mode.  Passing no arguments returns the
   current sharpness mode, otherwise passing `true` or `false` enables
   or disables automatic sharpness mode."
   ([] (register :sharpness-mode))
-  ([auto] (let [[[reg slice]] (registers :sharpness-mode)
-                [addr]  (registers reg)]
+  ([auto] (let [[[_ addr slice]] (reg->addr-coords :sharpness-mode)]
             (set-register-bits addr (if auto 1 0) slice)
             (sharpness-mode))))
 
@@ -469,24 +475,23 @@ OV7670 register coordinates. Entries are one of:
   current sharpness mode and value. Sharpness upper and lower limits
   are used in the automatic sharpness mode.
 
-  Pass a new sharpeness value to override automatic sharpness adjustment"
+  Pass a new sharpness value to override automatic sharpness adjustment"
   ([] {:mode  (register :sharpness-mode)
        :level (register :sharpness)
        :ul    (register :sharpness-ul)
        :ll    (register :sharpness-ll)})
-  ([adj] (let [[[reg slice]] (registers :sharpness)
-               [addr] (registers reg)]
+  ([adj] (let [[[_ addr slice]] (reg->addr-coords :sharpness)]
            (sharpness-mode false)
            (set-register-bits addr adj slice)
            (dissoc (sharpness-level) :ul :ll))))
+
 
 (defn exposure-mode
   "Read or adjust the exposure mode.  Passing no arguments returns the
   current exposure mode, otherwise passing `true` or `false` enables
   or disables automatic exposure control mode."
   ([] (register :aec-mode))
-  ([auto] (let [[[reg slice]] (registers :aec-mode)
-                [addr]  (registers reg)]
+  ([auto] (let [[[_ addr slice]] (reg->addr-coords :aec-mode)]
             (set-register-bits addr (if auto 1 0) slice)
             (exposure-mode))))
 
@@ -513,11 +518,8 @@ OV7670 register coordinates. Entries are one of:
          aec (+ (<<< AECHH 10) (<<< AECH 2) COM1)]
      [aec (format-micros (* aec (* 2 2 784)))]))
   ([value]
-   ;;[(>>> value 10) (>>> (bit-and value 0x3FC) 2) (bit-and value 0x03)]
    (exposure-mode false)
-   (let [[[r1 r1-slice] [r2 r2-slice] [r3 r3-slice]] (registers "AEC")
-         [r1-addr r2-addr r3-addr] (map (comp first registers) [r1 r2 r3])]
-     [r1 r1-addr r1-slice r2 r2-addr r2-slice r3 r3-addr r3-slice]
+   (let [[[_ r1-addr r1-slice] [_ r2-addr r2-slice] [_ r3-addr r3-slice]] (reg->addr-coords "AEC")]
      (set-register-bits r1-addr (>>> value 10) r1-slice)
      (set-register-bits r2-addr (>>> (bit-and value 0x3FC) 2) r2-slice)
      (set-register-bits r3-addr (bit-and value 0x03) r3-slice)
@@ -530,10 +532,54 @@ OV7670 register coordinates. Entries are one of:
   ([] (let [[_ [alg _]] (register :aec-algorithm)]
         (case alg 0 :avg 1 :hist)))
   ([algo]
-   (let [[[reg slice]] (registers :aec-algorithm)
-         [addr] (registers reg)]
+   (let [[[_ addr slice]] (reg->addr-coords :aec-algorithm)]
      (set-register-bits addr (case algo :avg 0 :hist 1 0) slice)
      (exposure-algorithm))))
+
+(defn gain-mode
+  "Read or set the automatic gain control.  Passing `true` or `false`
+  enables or disables automatic gain control."
+  ([] (register :agc-mode))
+  ([auto] (let [[[_ addr slice]] (reg->addr-coords :agc-mode)]
+            (set-register-bits addr (if auto 1 0) slice)
+            (gain-mode))))
+
+(defn gain-ceiling
+  "Read or set the upper limit of gain value used within automatic gain
+  control.
+
+  000: 2x
+  001: 4x
+  010: 8x
+  011: 16x
+  100: 32x
+  101: 64x
+  110: 128x
+  111: 128x"
+  ([] (register :gain-ceiling))
+  ([level] (let [[[_ addr slice]] (reg->addr-coords :gain-ceiling)
+                 level (condp <= level
+                         128 2r111
+                         64  2r110
+                         32  2r100
+                         16  2r011
+                         8   2r010
+                         4   2r001
+                         2r000)]
+            (set-register-bits addr level slice)
+            (gain-ceiling))))
+
+(defn gain
+  "Read or set the automatic gain control.  Passing `true` or `false`
+  enables or disables automatic gain control."
+  ([] (let [[_ vref76 gain70] (->> (register :gain) (map first))]
+        (+ (<<< vref76 8) gain70)))
+  
+  ([level] (let [[[_ r1-addr r1-slice] [_ r2-addr r2-slice]] (reg->addr-coords :gain)]
+             (gain-mode false)
+             (set-register-bits r1-addr (>>> level 8) r1-slice)
+             (set-register-bits r2-addr (bit-and level 0xFF) r2-slice)
+             (gain))))
 
 (defn set-image-scaling
   "Image Scaling
