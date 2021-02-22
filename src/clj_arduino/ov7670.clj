@@ -496,7 +496,7 @@ OV7670 register coordinates. Entries are one of:
             (exposure-mode))))
 
 
-(defn exposure-time
+(defn exposure
   "Get the current exposure time value. 
 
   Exposure time is the row interval time multiplied by the automatic
@@ -523,7 +523,7 @@ OV7670 register coordinates. Entries are one of:
      (set-register-bits r1-addr (>>> value 10) r1-slice)
      (set-register-bits r2-addr (>>> (bit-and value 0x3FC) 2) r2-slice)
      (set-register-bits r3-addr (bit-and value 0x03) r3-slice)
-     (exposure-time))))
+     (exposure))))
 
 (defn exposure-algorithm
   "There are two exposure algorithms, average based (:avg) and
@@ -543,6 +543,22 @@ OV7670 register coordinates. Entries are one of:
   ([auto] (let [[[_ addr slice]] (reg->addr-coords :agc-mode)]
             (set-register-bits addr (if auto 1 0) slice)
             (gain-mode))))
+
+(defn mirror
+  "Read or set the horizontal mirroring scan direction.  Passing `true`
+  enables horizontal mirroring, `false` disables it"
+  ([] (register :mirror))
+  ([enable] (let [[[_ addr slice]] (reg->addr-coords :mirror)]
+            (set-register-bits addr (if enable 1 0) slice)
+            (mirror))))
+
+(defn flip
+  "Read or set the vertical flip scan direction control.  Passing `true`
+  enables vertical flip, `false` disables it"
+  ([] (register :flip))
+  ([enable] (let [[[_ addr slice]] (reg->addr-coords :flip)]
+            (set-register-bits addr (if enable 1 0) slice)
+            (flip))))
 
 (defn gain-ceiling
   "Read or set the upper limit of gain value used within automatic gain
