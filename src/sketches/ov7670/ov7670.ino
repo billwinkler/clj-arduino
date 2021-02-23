@@ -693,7 +693,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
             while(!triggered); // wait for fresh vsync
             trigger = micros ();              
             while(triggered) {                       
-            // expect 150 Y bytes per line 
+            // expect 160 Y bytes per line, but clip last 10 to enable enough time to transmit them
             for (int i = 0; i < 150; i++) {                
 
                 // every other byte is either a Cb or a Cr value followed by a Y byte;
