@@ -25,26 +25,6 @@
   (gray-image "resources/img_-8.jpg" -8) ;; off white
   )
 
-;; (defn- image-size
-;;   "return width, height"
-;;   [image]
-;;   [(alength (aget image 0)) (alength image)])
-
-;; (defn- flatten-img
-;;   "flatten 2 dimensional image into single dim byte array"
-;;   [image]
-;;   (let [[w h] (image-size image)]
-;;     (loop [i h
-;;            bytez []]
-;;       (if (zero? i) (->> bytez flatten reverse (into-array Byte/TYPE))
-;;           (recur (dec i)
-;;                  (conj bytez  
-;;                        (loop [j w
-;;                               row []]
-;;                          (if (zero? j) row
-;;                              (recur (dec j) (conj row (aget image (dec i) (dec j))))))))))))
-
-
 (defn to-jpg
   "generate a jpg from the image"
   [image path]
@@ -100,7 +80,7 @@
   (close board)
   (set-register-bits 0x11 11)
   (cmd :capture-image)
-  (exposure-time)
+  (exposure)
   (show (@accum :image))
   (to-jpg (:image @accum) "resources/ov7670_8mhz_light.jpg")
   (cmd :some-pinc-d)
@@ -109,7 +89,5 @@
   (cmd :vsync-timing)
   (cmd :count-pixels)
   (cmd :pckl-timing)
-  (cmd :test)
-
-  )
+  (cmd :test))
 

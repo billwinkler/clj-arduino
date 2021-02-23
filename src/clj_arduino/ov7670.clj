@@ -597,6 +597,149 @@ OV7670 register coordinates. Entries are one of:
              (set-register-bits r2-addr (bit-and level 0xFF) r2-slice)
              (gain))))
 
+(defn test-pattern
+  "Read or change the test pattern output settings.  Use one of the following keywords 
+  to adjust the pattern.
+
+  :off         00  No test pattern output
+  :shifting-1  01  Shifting 1
+  :color-bar   10  8-bar color bar
+  ;; :fade-gray 11 Fade to gray color bar"
+
+  ([] (let [[_ pat0 pat1] (->> (register :test-pattern) (map first))]
+        ([:off :shifting-1 :color-bar :fade-gray] (+ (<<< pat0 1) pat1))))
+  
+  ([pattern] (let [[p0 p1] (case pattern
+                             :off        [0 0]
+                             :shifting-1 [0 1]
+                             :color-bar  [1 0]
+                             :fade-gray  [1 1])
+                   [[_ p0-addr p0-slice] [_ p1-addr p1-slice]] (reg->addr-coords :test-pattern)]
+             (set-register-bits p0-addr p0 p0-slice)
+             (set-register-bits p1-addr p1 p1-slice)
+             (test-pattern))))
+
+(defn banding-filter-mode
+  "Read or change the banding-filter-mode setting.  Use `true` to enable
+  or `false` to disable the banding filter.  When the filter is
+  disabled, then exposure time can be any value.  When it's enabled,
+  it must be N/100 (50hz) or N/120 (60hz)."
+
+  ([] (register :banding-filter-mode))
+  ([enable] (let [[[_ addr slice]] (reg->addr-coords :banding-filter-mode)]
+            (set-register-bits addr (if enable 1 0) slice)
+            (banding-filter-mode))))
+
+(defn banding-exposure-limit
+  "Read or change the banding-exposure-limit setting.  This changes the
+  banding filter behavior in strong light conditions when the banding
+  filter is enabled. Use `true` to enable or `false` to disable the
+  banding exposure limt.  When the limit is disabled, exposure time
+  will be limited to 1/100 or 1/120 second in any light condition when
+  the banding filter is enabled.  When the limit is enabled, it will
+  allow exposure times of less than 1/100 or 1/120 second in strong
+  light conditions"
+
+  ([] (register :banding-exposure-limit))
+  ([enable] (let [[[_ addr slice]] (reg->addr-coords :banding-exposure-limit)]
+            (set-register-bits addr (if enable 1 0) slice)
+            (banding-exposure-limit))))
+
+(defn banding-filter
+  "Read or change the banding-filter settings.
+  
+  From the implementation guide, in 50 or 60 hz light, the exposure
+  time must be a multiple of the flicker interval to avoid banding
+  shown on the image.  The exposure time must be N/100 for 50hz light,
+  and N/120 for 60hz light where N is some positive integer.
+
+  Since the expoure time AEC[15:0] is based on row interval, AEC needs
+  to know how many rows 1/100 or 1/120 second represents.  Banding
+  filter registers BD50ST and BD60ST hold these values.  Compute the
+  values as:
+     60hz: (/ 1 (* 120 row-interval-time))
+     50hz: (/ 1 (* 100 row-interval-time))
+
+  Row-interval-time is (/ (:end @accum) number-of-rows)
+
+  The following may or may not be a valid way to compute the banding
+  filter value.
+
+  The frame time can be measured from (@accum :end).  A
+  typical value is 3.746456 seconds for qqvga, 8mhz clock, with the
+  clock pre-scaler set to 11.
+
+  There are 120 rows in qqvga, thus rows per second are:
+  (/ 1 (/ 3.75 120)) 
+
+  And rows per 1/120 second: 
+  (/ 1 (/ 3.75 120) 120)
+
+  Multiply by 100 to get a value for N in the range 0 < N < 255
+
+  (Math/round (* 100 (/ 1 (/ 3.75 120) 120)))"
+  ([] {:bd50 (register "BD50ST") :bd60 (register "BD60ST")})
+  ([auto] (let [[addr50] (registers "BD50ST")
+                [addr60] (registers "BD60ST")
+                ftime (or (@accum :end) 3746456)
+                n50 (Math/round (* 100000000 (/ 1 (/ ftime 120) 100.0)))
+                n60 (Math/round (* 100000000 (/ 1 (/ ftime 120) 120.0)))]
+            (banding-filter-mode true)
+            (set-register-bits addr50 n50 [7 0])
+            (set-register-bits addr60 n60 [7 0])
+            (banding-filter))))
+
+(defn color-matrix
+  "This matrix applies color correction for the U & V channels.  The 
+  Y channel is not altered by the matrix settings.
+
+  From the implementation guide, it says the color matrix is used to
+  eliminate the cross talk induced by the micro-lens and color filter
+  process. It also compensates for lighting and temperature effects.
+  
+  The Y signal is not from the color matrix.  The sensor generates the
+  Y signal from the original RGB directly.  The color matrix performs
+  the color correction, RGB to YUV/YCbCr conversion, hue and color
+  saturation control.  Though the Y signal is not from the color
+  matrix, the calculation should be done by the 3x3 matrix to get the
+  combined matrix as shown below:
+
+  CombinedMatrix = SatMatix x HueMatrix x ConversionMatrix x CorrectionMatrix
+
+  and then take the two rows for UV/CbCr as the final color matrix.
+
+  RGB to YUV Conversion Matrix can be derived from the standard
+  equations below:
+
+  Y = 0.59G + 0.31R + 0.11B
+  U = B - Y
+  V = R - Y
+  Cr = 0.713 (R-Y)
+  Cb = 0.563 (B-Y)
+
+  Each matrix element has 9 bits, 1 sign bit and 8 data bits.  The
+  register value equals up to 128 times the real color matrix value."
+  ([]
+   (let [[[_ mtsx-addr mtsx-slice]] (reg->addr-coords :color-matrix-sign-bits)
+         [_ [signs _]] (register :color-matrix-sign-bits)
+         signs (for [i (range 5 -1 -1) :let [sign (or (and (bit-test signs i) -1) 1)]] sign)
+         cm (mapv (comp first register #(str "MTX" %)) (range 1 7))]
+     [(mapv #(format "%02X" %) cm) (mapv * cm signs)]))
+
+  ([matrix]
+   (let [[[_ mtsx-addr mtsx-slice]] (reg->addr-coords :color-matrix-sign-bits)
+         [_ [signs _]] (register :color-matrix-sign-bits)
+         regs (mapv (comp first registers #(str "MTX" %)) (range 1 7))
+         signs (->> (map #(if (pos? %) 0 1) matrix) reverse (apply str "2r") read-string)
+         matrix (mapv #(Math/abs %) matrix)]
+     (doall (for [i (range 6)] (set-register-bits (regs i) (matrix i) [7 0])))
+     (set-register-bits mtsx-addr signs mtsx-slice)
+     (color-matrix))))
+
+(comment
+  (registers "MTX1")
+  )
+
 (defn set-image-scaling
   "Image Scaling
   
@@ -756,7 +899,7 @@ OV7670 register coordinates. Entries are one of:
   (i2c-init board)
   (qqvga!)
   (soft-reset!)
-  (exposure-time)
+  (exposure)
   ;; pclk pre-scaller
   (set-register-bits 0x11 10)
   ;; MSB, dummy pixel insert
