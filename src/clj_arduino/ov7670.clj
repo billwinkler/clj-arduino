@@ -736,6 +736,43 @@ OV7670 register coordinates. Entries are one of:
      (set-register-bits mtsx-addr signs mtsx-slice)
      (color-matrix))))
 
+(defn- gamma-coordinates
+  "Fetch the gamma curve segment coordinates"
+  []
+  (let [regs (map #(str "GAM" %) (range 1 16))
+        xref [4 8 16 32 40 48 56 64 72 80 96 112 144 176 208]]
+    (->> (for [x (range 1 16)
+               :let [xr (xref (dec x))
+                     reg (str "GAM" x)
+                     [addr] (registers reg)
+                     y   (first (register reg))]]
+           {reg {:addr addr :x xr :y y}})
+         (reduce into))))
+
+(defn gamma
+  "Read or adjust the gamma curve values.  It takes one argument
+  `gamma-y` that is used as the exponent in a function that computes
+  new y coordinate segment values for each xref position.  The OV7670
+  uses a slope value to approximate the gamma between xref 208 and
+  255.  This slope value is computed from the GAM15 value."
+  ([] (-> (reduce-kv (fn [m k v] (assoc m k (dissoc v :addr) )) {} (gamma-coordinates))
+          (assoc "SLOP" (first (register "SLOP")))))
+  ([gamma-y]
+   (let [fx #(-> % (/ 255) (Math/pow gamma-y) (* 255) (Math/round) int)
+         coords  (gamma-coordinates)
+         slope   (->> (coords "GAM15") :x fx (- 256) (* (/ 4 3)) int)
+         [saddr] (registers "SLOP")]
+     (doall (for [i (keys coords)
+                  :let [{:keys [addr x]} (coords i)
+                        y (fx x)]]
+              (set-register-bits addr y [7 0])))
+     (set-register-bits saddr slope [7 0]))
+   (gamma)))
+
+(let [coords (gamma-coordinates)]
+  (coords "GAM1")
+  (keys coords))
+
 (comment
   (registers "MTX1")
   )
