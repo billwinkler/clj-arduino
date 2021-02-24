@@ -586,8 +586,8 @@ OV7670 register coordinates. Entries are one of:
             (gain-ceiling))))
 
 (defn gain
-  "Read or set the automatic gain control.  Passing `true` or `false`
-  enables or disables automatic gain control."
+  "Read or set the automatic gain control.  Passing a `level` amount
+  disables the automatic gain function and sets the gain level to this value."
   ([] (let [[_ vref76 gain70] (->> (register :gain) (map first))]
         (+ (<<< vref76 8) gain70)))
   
@@ -596,6 +596,27 @@ OV7670 register coordinates. Entries are one of:
              (set-register-bits r1-addr (>>> level 8) r1-slice)
              (set-register-bits r2-addr (bit-and level 0xFF) r2-slice)
              (gain))))
+
+(defn de-noise-mode
+  "Read or enable/disable the automatic de-noise function.  Passing
+  `true` or `false` enables or disables the function.  When enabled,
+  the computed noise threshold is stored in DNSTH[7:0]."
+  ([] (register :de-noise-mode))
+  ([auto] (let [[[_ addr slice]] (reg->addr-coords :de-noise-mode)]
+            (set-register-bits addr (if auto 1 0) slice)
+            (de-noise-mode))))
+
+(defn de-noise
+  "Read the current de-noise threshold and offset values.  Passing a new
+  threshold value disables automatic de-noise and set the threshold to
+  this value."
+  ([] {:mode (case (-> (register :de-noise-mode) fnext first) 0 :manual 1 :automatic)
+       :threshold (first (register "DNSTH"))
+       :offset   (first (register "REG77"))})
+  ([threshold] (let [[addr] (registers "DNSTH")]
+                 (de-noise-mode false)
+                 (set-register-bits addr threshold [7 0])
+                 (de-noise))))
 
 (defn test-pattern
   "Read or change the test pattern output settings.  Use one of the following keywords 
