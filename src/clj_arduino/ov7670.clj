@@ -12,11 +12,7 @@
 (def i2c-address 0x21)
 (def OV7670-COMMAND  0x40) ;; just testing
 
-
 (def parameters (atom {:debug #{:printer}}))
-;;(def img-size {:w 88 :h 144}) qcif
-;;(def img-size {:w 44 :h 72}) ;; qqcif
-;;(def img-size {:w 3 :h 37}) ;; qqcif, observed on Saleae
 ;; 160x120x2 frame (QQVGA)
 (def img-size {:w 150 :h 120}) ;; qqvga, YUV gray scale pixels
 (def accum (atom {}))
@@ -46,22 +42,19 @@ OV7670 register coordinates. Entries are one of:
   [msg]
   (case (-> msg first short)
     1 "confirm case statement"
-    2 "pinc & d, 4bit per byte"
+    2 "initial pixel clock low timing"
     3 "set pixel clock and vsync timer delays"
-    4 "88 bytes of vs, pckl flags"
+    4 "100 data samples at given offset"
     5 "vs time in microseconds"
     6 "pckl time in microseconds"
     7 "captured pixel counts"
     8 "data"
     9 "reset clock at 1mhz"
     10 "restore clock to 8mhz"
-    11 "testing firmata string data"
-    12 "testing direct uart send"
-    13 "testing loop counts"
     nil))
 
 (def cmds {:test          0x01
-           :some-pinc-d   0x02
+           :first-pulse   0x02
            :timer-delay   0x03
            :some-timing   0x04
            :vsync-timing  0x05
@@ -69,10 +62,7 @@ OV7670 register coordinates. Entries are one of:
            :count-pixels  0x07
            :capture-image 0x08
            :clock-at-1mhz 0x09
-           :clock-at-8mhz 0x0A
-           :send-bytes    0x0B
-           :uart-test     0x0C
-           :loop-test     0x0D})
+           :clock-at-8mhz 0x0A})
 
 (defn cmd
   "send instruction to the firmata controller"
@@ -104,10 +94,9 @@ OV7670 register coordinates. Entries are one of:
            (mapcat (fn [b] [(lsb b) (msb b)])
                    data))))
 
-(defn- bits [n]
-  (->> (map #(bit-and (bit-shift-right n %) 1) (range 8))
-      reverse
-      (apply str)))
+(defn- ->bits [i]
+  "zero padded bit string"
+  (cl-format nil "~8,'0b" i))
 
 (defn read-register
   "get the OV7670 register values as a map"
@@ -124,7 +113,7 @@ OV7670 register coordinates. Entries are one of:
                                  z (bit-and 1 (bit-shift-right reg x))]
                            :when (pos? y)] z))
          val (read-string (str "2r" bitz))
-         sval (format "%s 0x%02X  %s[%d:%d]"  bitz val (bits reg) b1 b0)]
+         sval (format "%s 0x%02X  %s[%d:%d]"  bitz val (->bits reg) b1 b0)]
      [val (if-not label sval (-> label first (str " " sval)))])))
 
 (defn register
@@ -154,7 +143,7 @@ OV7670 register coordinates. Entries are one of:
          bits-to-set (or (and (= b1 8) bits-to-set) (bit-shift-left bits-to-set b0))
          new-val (bit-or (bit-and old-val mask) bits-to-set)
          _ (println (format "Addr %02x" reg-addr) 
-                    "mask" (bits mask) "set" (bits bits-to-set) "from" (bits old-val) "to" (bits new-val))]
+                    "mask" (->bits mask) "set" (->bits bits-to-set) "from" (->bits old-val) "to" (->bits new-val))]
      (i2c-write board i2c-address reg-addr [new-val])
      [old-val new-val])))
 
@@ -162,40 +151,16 @@ OV7670 register coordinates. Entries are one of:
    [msg]
    (mapv #(format "%02X" (byte %)) msg))
 
-(defn fmt-timing-stream
-  "reduce the vs & pckl stream
-   vs and pckl vals alternate in the raw data stream"
-  [bytes]
-  (->>
-   (reduce (fn [res x]
-             (if (empty? res) (list [1 x])
-                 (let [[lc lb] (first res)]
-                   (if (= lb x)
-                     (conj (rest res) [(inc lc) x])
-                     (conj res [1 x]))))) [] bytes)
-   reverse
-;;   (remove #(= % [1 1]))
-;;   (mapv first)
-   ))
-
 (defn fmt-timings
-  "format the two timing streams
-   vs and pckl vals alternate in the raw data stream"
+  "format the `case 4` timing stream.  display the distinct pixels when
+  the pixel clock is low"
   [msg]
-  (let [bytes (->> (partition 4 msg))]
-    (->> (mapv (fn [[pclk _ pincd _]] [pclk pincd]) bytes)
-         (remove #(= % [0 0])))))
-
-;;(cmd :some-timing)
-
-#_(defn as-pixels
-  [msg]
-  (let [pixels (mapv (fn [[lsb msb]] 
-                       [(byte lsb) (byte msb) (- 127 (bit-or (byte lsb) (<<< (byte msb) 7)))])
-                     (partition 2 msg))]
-    ;; first word of YUV channel should be grayscale luminance
-    ;; so, partition 2 drops every other byte, retaining the Y channel, dropping the C channel
-    (->> (map (comp last first) (partition 2 pixels)))))
+  (let [bytez (->> (partition 4 msg))
+        fmted  (->> (mapv (fn [[pclk _ pin-lsb pin-msb]]
+                            [(case pclk 0 :l 1 :h)  (->bits (bit-or pin-lsb (<<< pin-msb 8)))]) bytez)
+                    (remove #(= [:h "00000000"] %)))
+        samps (for [[clk data] fmted :when (= clk :l)] data)]
+    (reduce (fn [[last :as all] samp] (if (= samp last) all (conj all samp))) () samps)))
 
 (defn as-pixels
   [msg]
@@ -203,10 +168,6 @@ OV7670 register coordinates. Entries are one of:
                        [(byte lsb) (byte msb) (- 127 (bit-or (byte lsb) (<<< (byte msb) 7)))])
                      (partition 2 msg))]
     (->> (map last pixels))))
-
-#_(defn as-pixels
-  [msg]
-  (mapv #(- 127 %) msg))
 
 (defn ascii?
    [msg]
@@ -232,8 +193,8 @@ OV7670 register coordinates. Entries are one of:
 (defn pincd-callback
    [msg]
    (mapv (fn [[m0 m1 m2 m3]]
-           [(bits (bit-or (bit-and (<<< m0 4) 0xf0) (bit-and m1 0x0f)))
-            (bits (bit-or (bit-and (<<< m2 4) 0xf0) (bit-and m3 0x0f)))])
+           [(->bits (bit-or (bit-and (<<< m0 4) 0xf0) (bit-and m1 0x0f)))
+            (->bits (bit-or (bit-and (<<< m2 4) 0xf0) (bit-and m3 0x0f)))])
          (->> (map byte msg) (partition 4))))
 
 (defn debug?
@@ -260,66 +221,41 @@ OV7670 register coordinates. Entries are one of:
     (cond
       (ascii? sysex-string) (assoc msg :last-msg (as-ascii-string sysex-string))
       (= 0x00 flag) (assoc msg :case   (decode-as-int data))
-      (= 0x02 flag) (assoc msg :pincd (pincd-callback data))
-      (= 0x13 flag) (assoc msg :pcdl1 (decode-as-int data))
-      (= 0x23 flag) (assoc msg :pcdl2 (decode-as-int data))
-      (= 0x33 flag) (assoc msg :vsdl1 (decode-as-int data))
-      (= 0x43 flag) (assoc msg :vsdl2 (decode-as-int data))
+      (= 0x02 flag) (assoc msg :pulse  (decode-as-int data))
+      (= 0x13 flag) (assoc msg :pcdl1  (decode-as-int data))
+      (= 0x23 flag) (assoc msg :pcdl2  (decode-as-int data))
       (= 0x04 flag) (assoc msg :timing (fmt-timings data))
-      (= 0x14 flag) (assoc-in msg [:delay :pc] (decode-as-int data))
-      (= 0x24 flag) (assoc-in msg [:delay :vs] (decode-as-int data))
+      (= 0x14 flag) (assoc msg :delay  (decode-as-int data))
+      (= 0x24 flag) (assoc msg :period (decode-as-int data))
       (= 0x05 flag) (assoc msg :vsync  (decode-as-int data))
-      (= 0x15 flag) (assoc msg :vscnt  (decode-as-int data))
       (= 0x06 flag) (assoc msg :pckl   (decode-as-int data))
-      (= 0x07 flag) (assoc-in msg [:pixel-cnts :valid] (decode-as-int data))
-      (= 0x17 flag) (assoc-in msg [:pixel-cnts :invalid] (decode-as-int data))
+      (= 0x07 flag) (assoc msg :pcount (decode-as-int data))
       (= 0x08 flag) (assoc msg :pixels (as-pixels data))
       (= 0x18 flag) (assoc msg :begin true)
-      (= 0x28 flag) (assoc msg :line   (decode-as-int data))
-      ;;      (= 0x38 flag) (assoc msg :offset (decode-as-int data))
-      (= 0x48 flag) (assoc msg :row    (decode-as-int data))
-      (= 0x58 flag) (assoc msg :sndtm  (decode-as-int data))
-      (= 0x68 flag) (assoc msg :end    (decode-as-int data))
-      (= 0x0B flag) (assoc msg :caseb  (count data))
-      (= 0x0C flag) (assoc msg :casec (as-hex-array data))
-      (= 0x1D flag) (assoc msg :j     (decode-as-int data))
-      (= 0x2D flag) (assoc msg :total (decode-as-int data))
+      (= 0x28 flag) (assoc msg :end    (decode-as-int data))
       :else msg)))
 
 (defn printer
   "print some elements of the reading payload"
-  [{:keys [flag case vsync pckl begin end last-msg pincd timing delay
-           pcdl1 pcdl2 vsdl1 vsdl2 line offset pixels vscnt row sndtm
-           caseb casec j total] :as msg}]
+  [{:keys [flag case last-msg pulse pcdl1 pcdl2 timing delay 
+           period vsync pckl pcount pixels begin end] :as msg}]
   (when (and (not-empty msg)
              (debug? :printer))
      (cond
       last-msg (println "response:" last-msg)
-      case (println (format "case %d: %s" case (decode-as-case [case])))
-      vsync (println (format "vsync %s" (format-micros vsync)))
-      vscnt (println "vsync count" vscnt)
-      pckl (println (format "~pixel clock %s" (format-micros pckl)))
+      case   (println (format "case %d: %s" case (decode-as-case [case])))
+      vsync  (println (format "vsync %s" (format-micros vsync)))
+      pckl   (println (format "~pixel clock %s" (format-micros pckl)))
+      pulse  (println "first pulse" (format-micros pulse))
+      pcdl1  (println "pckl delay ms" pcdl1)
+      pcdl2  (println "pckl delay us" pcdl2)
+      delay  (println "delay:" (format-micros delay))
+      period (println "period:" (format-micros period))
       timing (println timing)
-;;      line  (println "> line" line " ")
-;;      offset (println "> off" offset " ")
+      pcount (println "pixel count:" pcount)
+      begin  (println "begin image capture")
       pixels (println (count pixels) "pixels captured")
-      pcdl1 (println "pckl delay ms" pcdl1)
-      pcdl2 (println "pckl delay us" pcdl2)
-      vsdl1 (println "vs   delay ms" vsdl1)
-      vsdl2 (println "vs   delay us" vsdl2)
-      delay (println "delay:" delay)
-      pincd (println pincd)
-      begin (println "begin image capture")
-      row   (println "line:" (:line @accum) (format-micros row))
-      sndtm (println "firmata send overhead:" (format-micros sndtm))
-      end   (println "end:" (format-micros end))
-      caseb (println "bytes received" caseb)
-      casec (println "bytes received" casec)
-      j     (println "j" j)
-      total (println "total" total)
-      (= flag 0x17) (println "valid/invalid pixel cnts:"
-                             (get-in @accum [:pixel-cnts :valid])
-                             (get-in msg [:pixel-cnts :invalid]))))
+      end    (println "end:" (format-micros end))))
   msg)
 
 (defn accumulator
@@ -367,10 +303,6 @@ OV7670 register coordinates. Entries are one of:
       firmware))
 
 
-(defn- ->bits [i]
-  "zero padded bit string"
-  (cl-format nil " ~2,'0x ~8,'0b" i i))
-
 (defn enable-scaling
   "scaling needs to be enabled for QCIF (176x144) format"
   []
@@ -398,7 +330,6 @@ OV7670 register coordinates. Entries are one of:
   []
   (i2c-write board i2c-address 0x12 [0x80]))
 
-;;(read-register 0x0c)
 
 (defn pixel-format
   "From section 2 of the implementation guide, the OV7670 has an image
@@ -790,14 +721,6 @@ OV7670 register coordinates. Entries are one of:
      (set-register-bits saddr slope [7 0]))
    (gamma)))
 
-(let [coords (gamma-coordinates)]
-  (coords "GAM1")
-  (keys coords))
-
-(comment
-  (registers "MTX1")
-  )
-
 (defn set-image-scaling
   "Image Scaling
   
@@ -967,19 +890,21 @@ OV7670 register coordinates. Entries are one of:
   (set-register-bits 0x2E 0x00 [7 0])
   (set-register-bits 0x2D 60 [7 0])
   (cmd :capture-image)  
-  (cmd :loop-test)  
-  (cmd :send-bytes)
   (cmd :test)
-  (cmd :uart-test)
+  (cmd :first-pulse)
   (cmd :clock-at-1mhz)
   (cmd :clock-at-8mhz)
   (cmd :vsync-timing)
-  ;; [msb, lsb] pc ms delay; pc us; vs ms; vs us 
-  (doseq [n (range 0 100)]
-    (cmd :timer-delay 0 27 0 n 0 0 0 0)
+  ;; [msb, lsb] pc ms delay; pc us
+  (doseq [n (range 1 10)]
+    (cmd :timer-delay 0 27 0 n)
+    (Thread/sleep 1000)
+    (cmd :some-timing))
+
+  (doseq [n (range 500 600 10)]
+    (cmd :timer-delay 0 143 n 0)
     (Thread/sleep 500)
     (cmd :some-timing))
-  (cmd :some-pinc-d)
   (cmd :count-pixels)
   (cmd :pckl-timing)
   (cmd :test))
