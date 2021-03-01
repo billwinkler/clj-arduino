@@ -99,14 +99,27 @@ OV7670 register coordinates. Entries are one of:
   (cl-format nil "~8,'0b" i))
 
 (defn read-register
-  "get the OV7670 register values as a map"
+  "get the OV7670 register value for register at a given address"
   [addr]
-  (i2c-blocking-read board i2c-address addr 1 :timeout 500))
+  (first (i2c-blocking-read board i2c-address addr 1 :timeout 500)))
 
 (defn- register-bits
+  "Get the value of a given range of bits within a given register
+  address. Format the return for debug printing.  The output is in the
+  form:
+
+  [label val \"val-bin-str val-hex-str reg-bin-str[slice]\"
+
+  label      :  register name (optional)
+  val        :  decimal value of the slice
+  val-bin-str:  val formatted as binary string
+  val-hex-str:  val formatted as hex sting
+  reg-bin-str:  register bits as binary string 
+  slice      :  bit from/to slice range"
   ([addr] (register-bits addr [7 0]))
   ([addr [b1 b0] & label]
-   (let [reg (-> addr read-register first)
+   (let [reg (read-register addr)
+         ;; strip off the bits within the given slice range
          bitz (apply str 
                      (for [x (range 7 -1 -1)
                            :let [y (if (>= b1 x b0) 1 0)
@@ -117,7 +130,7 @@ OV7670 register coordinates. Entries are one of:
      [val (if-not label sval (-> label first (str " " sval)))])))
 
 (defn register
-  "Get the register value for a given name"
+  "Get the register value for a given register name"
   [name]
   (let [[reg & [slice]] (registers name)]
     (cond 
@@ -133,7 +146,7 @@ OV7670 register coordinates. Entries are one of:
   within a bit range (defaults to a full range of [8 0])"
   ([reg-addr bits-to-set] (set-register-bits reg-addr bits-to-set [8 0]))
   ([reg-addr bits-to-set [b1 b0]]
-   (let [[old-val _] (read-register reg-addr)
+   (let [old-val (read-register reg-addr)
          mask (->> (map-indexed (fn [idx n] 
                                   (let [b (if (>= b1 idx b0) 0 1)]
                                     (bit-shift-left b n)))
@@ -148,36 +161,46 @@ OV7670 register coordinates. Entries are one of:
      [old-val new-val])))
 
  (defn as-hex-array
+   "Format the returned message values as hex values for display purposes."
    [msg]
    (mapv #(format "%02X" (byte %)) msg))
 
 (defn fmt-timings
-  "format the `case 4` timing stream.  display the distinct pixels when
-  the pixel clock is low"
+  "Format the `case 4` timing stream.  Display the distinct pixels
+  captured during periods when the pixel clock is low.  The raw timing
+  data stream is 4 bytes wide.  First byte is 1 when pixel clock is
+  high and 0 when low.  Second byte is the MSB of the pixel clock
+  which is always zero.  The next two bytes are the D7 to D0 bits."
   [msg]
   (let [bytez (->> (partition 4 msg))
         fmted  (->> (mapv (fn [[pclk _ pin-lsb pin-msb]]
                             [(case pclk 0 :l 1 :h)  (->bits (bit-or pin-lsb (<<< pin-msb 8)))]) bytez)
-                    (remove #(= [:h "00000000"] %)))
+;;                    (remove #(= [:h "00000000"] %))
+                    )
         samps (for [[clk data] fmted :when (= clk :l)] data)]
+    ;; drop duplicates
     (reduce (fn [[last :as all] samp] (if (= samp last) all (conj all samp))) () samps)))
 
 (defn as-pixels
+  "Interpret the message data as a gray scale (Y channel) pixel stream."
   [msg]
-  (let [pixels (mapv (fn [[lsb msb]] 
-                       [(byte lsb) (byte msb) (- 127 (bit-or (byte lsb) (<<< (byte msb) 7)))])
-                     (partition 2 msg))]
-    (->> (map last pixels))))
+  (mapv (fn [[lsb msb]] (- 127 (bit-or (byte lsb) (<<< (byte msb) 7))))
+        (partition 2 msg)))
 
 (defn ascii?
+  "Returns true when all values in a message are printable characters"
    [msg]
    (->> (partition 2 msg) (map (comp long first)) (every? #(< 0x19 % 0x7f))))
 
 (defn as-ascii-string
+  "Format the message as an ASCII string"
    [msg]
    (->> (partition 2 msg) (map first) (apply str)))
 
 (defn decode-as-int
+  "Interpret the message as one sent as STRING_DATA, four characters in
+  length, encoded via the `send_int` function.  Each character holds 7
+  bits of the integer value."
   [msg]
   (let [[b0 b1 b2 b3] (->> (map byte msg) (partition 2) (map first))]
     (+ b0 (<<< b1 7) (<<< b2 14) (<<< b3 21))))
@@ -189,13 +212,6 @@ OV7670 register coordinates. Entries are one of:
         ms (-> micros (rem 1000000) (quot 1000))
         us (-> micros (rem 1000000) (rem 1000))]
     (format "%ds %dms %dus  -- %d" secs ms us micros)))
-
-(defn pincd-callback
-   [msg]
-   (mapv (fn [[m0 m1 m2 m3]]
-           [(->bits (bit-or (bit-and (<<< m0 4) 0xf0) (bit-and m1 0x0f)))
-            (->bits (bit-or (bit-and (<<< m2 4) 0xf0) (bit-and m3 0x0f)))])
-         (->> (map byte msg) (partition 4))))
 
 (defn debug?
   "test debug settings"
@@ -307,7 +323,7 @@ OV7670 register coordinates. Entries are one of:
   "scaling needs to be enabled for QCIF (176x144) format"
   []
   (let [addr 0x0C
-        [reg _] (read-register addr)]
+        reg (read-register addr)]
     (i2c-write board i2c-address addr [(bit-or reg 2r1000)])))
 
 (defn pckl-off-when-hblanking
@@ -787,21 +803,21 @@ OV7670 register coordinates. Entries are one of:
   []
   ;; try dividing pixel clock by 16
   (let [com14 0x3e
-        [reg _] (read-register com14)]
+        reg (read-register com14)]
     (i2c-write board i2c-address com14 [(bit-or reg 2r1100)]))
 
   ;; try enabling digital zoom and down sampling
   (let [com03 0x0C
-        [reg _] (read-register com03)]
+        reg (read-register com03)]
     (i2c-write board i2c-address com03 [(bit-or reg 2r1100)]))
 
   ;; down sample v&h by 4
   (let [register 0x72
-        [reg _] (read-register register)]
+        reg (read-register register)]
     (i2c-write board i2c-address register [(bit-or reg 2r100010)]))
 
   (let [register 0x73
-        [reg _] (read-register register)]
+        reg (read-register register)]
     (i2c-write board i2c-address register [(bit-or reg 2r1010)])))
 
 
