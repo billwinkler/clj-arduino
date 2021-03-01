@@ -318,13 +318,22 @@ OV7670 register coordinates. Entries are one of:
         (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler)))
       firmware))
 
+(defn- reg->addr-coords
+  "Extract the address and bit slice values for a given pseudo register name"
+  [name]
+  (for [[rn slice] (registers name)
+      :let [[addr] (registers rn)]]
+  [rn addr slice]))
+
 
 (defn enable-scaling
-  "scaling needs to be enabled for QCIF (176x144) format"
-  []
-  (let [addr 0x0C
-        reg (read-register addr)]
-    (i2c-write board i2c-address addr [(bit-or reg 2r1000)])))
+  "Read or change the scaling mode.  Passing `true` enables scaling when
+  using predefined format (defined via COM7[5:3]), or to enable manual
+  scaling.  For manual scaling then COM14[3] must also be set to 1."
+  ([] (register :enable-scaling))
+  ([enable] (let [[[_ addr slice]] (reg->addr-coords :enable-scaling)]
+              (set-register-bits addr (if enable 1 0) slice)
+              (enable-scaling))))
 
 (defn free-running-pixel-clock
   "Read or change the free-running pixel clock setting. Passing `true`
@@ -335,11 +344,6 @@ OV7670 register coordinates. Entries are one of:
   ([enable] (let [[[_ addr slice]] (reg->addr-coords :free-running-pixel-clock)]
               (set-register-bits addr (if enable 0 1) slice)
               (free-running-pixel-clock))))
-
-#_(defn pckl-off-when-hblanking
-  "suppresses the pixel clock while not capturing data bits"
-  []
-  (i2c-write board i2c-address 0x15 [(bit-set 0 5)]))
 
 (defn set-data-format-range
   "Adjust the pixel value range"
@@ -411,12 +415,14 @@ OV7670 register coordinates. Entries are one of:
            (set-register-bits addr adj)
            (contrast-level))))
 
-(defn- reg->addr-coords
-  "Extract the address and bit slice values for a given pseudo register name"
-  [name]
-  (for [[rn slice] (registers name)
-      :let [[addr] (registers rn)]]
-  [rn addr slice]))
+(defn night-mode
+  "Read or change the night-mode setting.  Passing no arguments returns
+  the current mode, otherwise passing `true` or `false` enables or
+  disables night mode."
+  ([] (register :night-mode))
+  ([enable] (let [[[_ addr slice]] (reg->addr-coords :night-mode)]
+            (set-register-bits addr (if enable 1 0) slice)
+            (night-mode))))
 
 (defn sharpness-mode
   "Read or adjust the sharpness mode.  Passing no arguments returns the
@@ -816,6 +822,7 @@ OV7670 register coordinates. Entries are one of:
         reg (read-register com14)]
     (i2c-write board i2c-address com14 [(bit-or reg 2r1100)]))
 
+
   ;; try enabling digital zoom and down sampling
   (let [com03 0x0C
         reg (read-register com03)]
@@ -941,7 +948,7 @@ OV7670 register coordinates. Entries are one of:
   (read-register 1)
   ;; video format
   (read-register 0x12)
-  (enable-scaling)
+  (enable-scaling true)
   (set-video-format :qcif)
 
   ;; bit 5 PCLK does not toggle on horizontal blank

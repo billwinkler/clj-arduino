@@ -80,7 +80,10 @@
   (close board)
   (set-register-bits 0x11 11)
   (cmd :capture-image)
+  (night-mode true)
+  
   (exposure)
+  (gamma 0.3)
   (show (@accum :image))
   (to-jpg (:image @accum) "resources/ov7670_8mhz_light.jpg")
   (cmd :some-pinc-d)
