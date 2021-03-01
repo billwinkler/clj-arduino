@@ -326,8 +326,18 @@ OV7670 register coordinates. Entries are one of:
         reg (read-register addr)]
     (i2c-write board i2c-address addr [(bit-or reg 2r1000)])))
 
-(defn pckl-off-when-hblanking
-  "suppresses the pixel clock with not capturing data bits"
+(defn free-running-pixel-clock
+  "Read or change the free-running pixel clock setting. Passing `true`
+  enables the free-running pixel clock, and `false` disables
+  it (i.e. set the bit value to 1, so that the pixel clock will not
+  toggle during horizontal blanking periods)."
+  ([] (register :free-running-pixel-clock))
+  ([enable] (let [[[_ addr slice]] (reg->addr-coords :free-running-pixel-clock)]
+              (set-register-bits addr (if enable 0 1) slice)
+              (free-running-pixel-clock))))
+
+#_(defn pckl-off-when-hblanking
+  "suppresses the pixel clock while not capturing data bits"
   []
   (i2c-write board i2c-address 0x15 [(bit-set 0 5)]))
 
@@ -883,8 +893,7 @@ OV7670 register coordinates. Entries are one of:
   []
   (i2c-init board)
   (qqvga!)
-;;  (set-data-format-range :x10-0xF0)
-  (pckl-off-when-hblanking)
+  (free-running-pixel-clock false)
 ;;  (cmd :clock-at-1mhz)
   "ok")
 
