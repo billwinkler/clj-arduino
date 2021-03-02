@@ -605,7 +605,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
             trigger = micros ();              
             while(triggered) {                       
             // expect 160 Y bytes per line, but clip last 10 to enable enough time to transmit them
-            for (int i = 0; i < 150; i++) {                
+            for (int i = 0; i < 130; i++) {                
 
                 // every other byte is either a Cb or a Cr value followed by a Y byte;
                 // e.g [Cb0 Y0 Cr0 Y1 Cb2 Y2 Cr2 Y3 ...] 
@@ -624,7 +624,7 @@ void sysexCallback(byte command, byte argc, byte *argv)
                 break;
               }
                // send the line pixels             
-              for (int i=0; i < 150; i++) {
+              for (int i=0; i < 130; i++) {
                 Serial.write(buf[i] & 0x7f);
                 Serial.write(buf[i] >> 7);
               } 

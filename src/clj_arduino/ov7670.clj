@@ -14,7 +14,7 @@
 
 (def parameters (atom {:debug #{:printer}}))
 ;; 160x120x2 frame (QQVGA)
-(def img-size {:w 150 :h 120}) ;; qqvga, YUV gray scale pixels
+(def img-size {:w 130 :h 120}) ;; qqvga, YUV gray scale pixels
 (def accum (atom {}))
 (def board)
 
@@ -94,71 +94,6 @@ OV7670 register coordinates. Entries are one of:
            (mapcat (fn [b] [(lsb b) (msb b)])
                    data))))
 
-(defn- ->bits [i]
-  "zero padded bit string"
-  (cl-format nil "~8,'0b" i))
-
-(defn read-register
-  "get the OV7670 register value for register at a given address"
-  [addr]
-  (first (i2c-blocking-read board i2c-address addr 1 :timeout 500)))
-
-(defn- register-bits
-  "Get the value of a given range of bits within a given register
-  address. Format the return for debug printing.  The output is in the
-  form:
-
-  [label val \"val-bin-str val-hex-str reg-bin-str[slice]\"
-
-  label      :  register name (optional)
-  val        :  decimal value of the slice
-  val-bin-str:  val formatted as binary string
-  val-hex-str:  val formatted as hex sting
-  reg-bin-str:  register bits as binary string 
-  slice      :  bit from/to slice range"
-  ([addr] (register-bits addr [7 0]))
-  ([addr [b1 b0] & label]
-   (let [reg (read-register addr)
-         ;; strip off the bits within the given slice range
-         bitz (apply str 
-                     (for [x (range 7 -1 -1)
-                           :let [y (if (>= b1 x b0) 1 0)
-                                 z (bit-and 1 (bit-shift-right reg x))]
-                           :when (pos? y)] z))
-         val (read-string (str "2r" bitz))
-         sval (format "%s 0x%02X  %s[%d:%d]"  bitz val (->bits reg) b1 b0)]
-     [val (if-not label sval (-> label first (str " " sval)))])))
-
-(defn register
-  "Get the register value for a given register name"
-  [name]
-  (let [[reg & [slice]] (registers name)]
-    (cond 
-      (nil? reg) nil
-      (vector? reg) (-> (map (fn [[nm slice]] (register-bits (-> nm registers first) slice nm)) 
-                             (registers name))
-                        (into (list (str name))))
-      (not-empty slice) (register-bits reg slice name)
-      :else (register-bits reg [7 0] name))) )
-
-(defn set-register-bits
-  "Update the value stored in a given register, setting the given bits,
-  within a bit range (defaults to a full range of [8 0])"
-  ([reg-addr bits-to-set] (set-register-bits reg-addr bits-to-set [8 0]))
-  ([reg-addr bits-to-set [b1 b0]]
-   (let [old-val (read-register reg-addr)
-         mask (->> (map-indexed (fn [idx n] 
-                                  (let [b (if (>= b1 idx b0) 0 1)]
-                                    (bit-shift-left b n)))
-                                (range 8))
-                   reverse
-                   (reduce bit-or))
-         bits-to-set (or (and (= b1 8) bits-to-set) (bit-shift-left bits-to-set b0))
-         new-val (bit-or (bit-and old-val mask) bits-to-set)
-         _ (println (format "Addr %02x" reg-addr) 
-                    "mask" (->bits mask) "set" (->bits bits-to-set) "from" (->bits old-val) "to" (->bits new-val))]
-     (i2c-write board i2c-address reg-addr [new-val])
-     [old-val new-val])))
 
  (defn as-hex-array
    "Format the returned message values as hex values for display purposes."
@@ -318,6 +253,73 @@ OV7670 register coordinates. Entries are one of:
         (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler)))
       firmware))
 
+(defn- ->bits [i]
+  "zero padded bit string"
+  (cl-format nil "~8,'0b" i))
+
+(defn read-register
+  "get the OV7670 register value for register at a given address"
+  [addr]
+  (first (i2c-blocking-read board i2c-address addr 1 :timeout 500)))
+
+(defn- register-bits
+  "Get the value of a given range of bits within a given register
+  address. Format the return for debug printing.  The output is in the
+  form:
+
+  [label val \"val-bin-str val-hex-str reg-bin-str[slice]\"
+
+  label      :  register name (optional)
+  val        :  decimal value of the slice
+  val-bin-str:  val formatted as binary string
+  val-hex-str:  val formatted as hex sting
+  reg-bin-str:  register bits as binary string 
+  slice      :  bit from/to slice range"
+  ([addr] (register-bits addr [7 0]))
+  ([addr [b1 b0] & label]
+   (let [reg (read-register addr)
+         ;; strip off the bits within the given slice range
+         bitz (apply str 
+                     (for [x (range 7 -1 -1)
+                           :let [y (if (>= b1 x b0) 1 0)
+                                 z (bit-and 1 (bit-shift-right reg x))]
+                           :when (pos? y)] z))
+         val (read-string (str "2r" bitz))
+         sval (format "%s 0x%02X  %s[%d:%d]"  bitz val (->bits reg) b1 b0)]
+     [val (if-not label sval (-> label first (str " " sval)))])))
+
+(defn register
+  "Get the register value for a given register name"
+  [name]
+  (let [[reg & [slice]] (registers name)]
+    (cond 
+      (nil? reg) nil
+      (vector? reg) (-> (map (fn [[nm slice]] (register-bits (-> nm registers first) slice nm)) 
+                             (registers name))
+                        (into (list (str name))))
+      (not-empty slice) (register-bits reg slice name)
+      :else (register-bits reg [7 0] name))) )
+
+(defn set-register-bits
+  "Update the value stored in a given register, setting the given bits,
+  within a bit range (defaults to a full range of [8 0])"
+  ([reg-addr bits-to-set] (set-register-bits reg-addr bits-to-set [8 0]))
+  ([reg-addr bits-to-set [b1 b0]]
+   (let [old-val (read-register reg-addr)
+         mask (->> (map-indexed (fn [idx n] 
+                                  (let [b (if (>= b1 idx b0) 0 1)]
+                                    (bit-shift-left b n)))
+                                (range 8))
+                   reverse
+                   (reduce bit-or))
+         bits-to-set (or (and (= b1 8) bits-to-set) (bit-shift-left bits-to-set b0))
+         new-val (bit-or (bit-and old-val mask) bits-to-set)
+         _ (println (format "Addr %02x" reg-addr) 
+                    "mask" (->bits mask) "set" (->bits bits-to-set) "from" (->bits old-val) "to" (->bits new-val))]
+     (i2c-write board i2c-address reg-addr [new-val])
+     [old-val new-val])))
+
+
 (defn- reg->addr-coords
   "Extract the address and bit slice values for a given pseudo register name"
   [name]
@@ -359,6 +361,19 @@ OV7670 register coordinates. Entries are one of:
   "reset registers to default values by writing a 1 to COM7[7] (0x12)"
   []
   (i2c-write board i2c-address 0x12 [0x80]))
+
+(defn pll-multiplier
+  "Read or adjust the PLL multiplier. Pass a value between 0 and 3 to
+  change the PLL-Multiplier value:
+
+  0 00: Bypass PLL
+  1 01: Multiply input clock by 4
+  2 10: Multiply input clock by 6
+  3 11: Multiply input clock by 8"
+  ([] (register :pll-multiplier))
+  ([level] (let [[[_ addr slice]] (reg->addr-coords :pll-multiplier)]
+            (set-register-bits addr level slice)
+            (pll-multiplier))))
 
 
 (defn pixel-format
