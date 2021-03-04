@@ -78,6 +78,7 @@
  :mirror                     [["MVFP"  [5 5]]]
  :free-running-pixel-clock   [["COM10" [5 5]]]
  :night-mode                 [["COM11" [7 7]]]
+ :output-format-range        [["COM15" [7 6]]]
  :pixel-format               [["COM7"  [2 2]] ["COM7" [0 0]] ["COM15" [5 5]] ["COM15" [4 4]]]
  :pll-multiplier             [["DBLV"  [7 6]]]
  :sharpness-mode             [["COM16" [5 5]]]

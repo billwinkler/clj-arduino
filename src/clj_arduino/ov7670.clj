@@ -327,14 +327,10 @@ OV7670 register coordinates. Entries are one of:
       :let [[addr] (registers rn)]]
   [rn addr slice]))
 
-(defmacro read-or-set-register
-  "Read or change a given `pseudo-register` setting."
-  ([pseudo-reg] `(register ~pseudo-reg))
-  ([pseudo-reg value] 
-   `(let [[[_# addr# slice#]] (reg->addr-coords ~pseudo-reg)]
-      (do 
-        (set-register-bits addr# ~value slice#)
-        (read-or-set-register ~pseudo-reg)))))
+(defn soft-reset!
+  "reset registers to default values by writing a 1 to COM7[7] (0x12)"
+  []
+  (i2c-write board i2c-address 0x12 [0x80]))
 
 (defmacro read-or-set-register
   "Read or change a given `pseudo-register` setting."
@@ -348,31 +344,28 @@ OV7670 register coordinates. Entries are one of:
   "Read or change the scaling mode.  Passing `true` enables scaling when
   using predefined format (defined via COM7[5:3]), or to enable manual
   scaling.  For manual scaling then COM14[3] must also be set to 1."
-  [& [enable]] (let [enable (or (and enable 1) 0)]
-                 (read-or-set-register :enable-scaling enable)))
+  [& [enable]] 
+  (let [enable (or (and enable 1) 0)]
+    (read-or-set-register :enable-scaling enable)))
 
 (defn free-running-pixel-clock
   "Read or change the free-running pixel clock setting. Passing `true`
   enables the free-running pixel clock, and `false` disables
   it (i.e. set the bit value to 1, so that the pixel clock will not
   toggle during horizontal blanking periods)."
-  [& [enable]] (let [enable (or (and enable 0) 1)]
-                 (read-or-set-register :free-running-pixel-clock enable)))
+  [& [enable]]
+  (let [enable (or (and enable 0) 1)]
+    (read-or-set-register :free-running-pixel-clock enable)))
 
-(defn set-data-format-range
-  "Adjust the pixel value range"
-  [output-range]
+(defn output-format-range
+  "Read or change the output format range."
+  [& [output-range]]
   (let [rng (condp = output-range
                 :x10-0xF0 2r00
                 :x01-0xFE 2r10
                 :x00-0xFF 2r11
-                2r11)]
-    (set-register-bits 0x40 rng [7 6])))
-
-(defn soft-reset!
-  "reset registers to default values by writing a 1 to COM7[7] (0x12)"
-  []
-  (i2c-write board i2c-address 0x12 [0x80]))
+                nil)]
+    (read-or-set-register :output-format-range rng)))
 
 (defn pll-multiplier
   "Read or adjust the PLL multiplier. Pass a value between 0 and 3 to
@@ -382,10 +375,19 @@ OV7670 register coordinates. Entries are one of:
   1 01: Multiply input clock by 4
   2 10: Multiply input clock by 6
   3 11: Multiply input clock by 8"
-  ([] (register :pll-multiplier))
-  ([level] (let [[[_ addr slice]] (reg->addr-coords :pll-multiplier)]
-            (set-register-bits addr level slice)
-            (pll-multiplier))))
+  [& [level]] 
+  (read-or-set-register :pll-multiplier level))
+
+(defn pll-multiplier
+  "Read or adjust the PLL multiplier. Pass a value between 0 and 3 to
+  change the PLL-Multiplier value:
+
+  0 00: Bypass PLL
+  1 01: Multiply input clock by 4
+  2 10: Multiply input clock by 6
+  3 11: Multiply input clock by 8"
+  [ & [level]]
+  (read-or-set-register :pll-multiplier level))
 
 
 (defn pixel-format
