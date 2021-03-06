@@ -95,10 +95,10 @@ OV7670 register coordinates. Entries are one of:
                    data))))
 
 
- (defn as-hex-array
-   "Format the returned message values as hex values for display purposes."
-   [msg]
-   (mapv #(format "%02X" (byte %)) msg))
+(defn as-hex-array
+  "Format the returned message values as hex values for display purposes."
+  [msg]
+  (mapv #(format "%02X" (byte %)) msg))
 
 (defn fmt-timings
   "Format the `case 4` timing stream.  Display the distinct pixels
@@ -109,9 +109,7 @@ OV7670 register coordinates. Entries are one of:
   [msg]
   (let [bytez (->> (partition 4 msg))
         fmted  (->> (mapv (fn [[pclk _ pin-lsb pin-msb]]
-                            [(case pclk 0 :l 1 :h)  (->bits (bit-or pin-lsb (<<< pin-msb 8)))]) bytez)
-;;                    (remove #(= [:h "00000000"] %))
-                    )
+                            [(case pclk 0 :l 1 :h)  (->bits (bit-or pin-lsb (<<< pin-msb 8)))]) bytez))
         samps (for [[clk data] fmted :when (= clk :l)] data)]
     ;; drop duplicates
     (reduce (fn [[last :as all] samp] (if (= samp last) all (conj all samp))) () samps)))
@@ -333,6 +331,14 @@ OV7670 register coordinates. Entries are one of:
   (i2c-write board i2c-address 0x12 [0x80]))
 
 (defmacro read-or-set-register
+  "Read or change a given register setting."
+  [reg & [value]] 
+  `(do (when ~value
+         (let [[addr#] (registers ~reg)]
+           (set-register-bits addr# ~value)))
+       (register ~reg)))
+
+(defmacro read-or-set-pregister
   "Read or change a given `pseudo-register` setting."
   [pseudo-reg & [value]] 
   `(do (when ~value
@@ -344,9 +350,8 @@ OV7670 register coordinates. Entries are one of:
   "Read or change the scaling mode.  Passing `true` enables scaling when
   using predefined format (defined via COM7[5:3]), or to enable manual
   scaling.  For manual scaling then COM14[3] must also be set to 1."
-  [& [enable]] 
-  (let [enable (or (and enable 1) 0)]
-    (read-or-set-register :enable-scaling enable)))
+  [& [enable]]
+  (read-or-set-pregister :enable-scaling (case enable true 1 false 0 nil)))
 
 (defn free-running-pixel-clock
   "Read or change the free-running pixel clock setting. Passing `true`
@@ -354,8 +359,7 @@ OV7670 register coordinates. Entries are one of:
   it (i.e. set the bit value to 1, so that the pixel clock will not
   toggle during horizontal blanking periods)."
   [& [enable]]
-  (let [enable (or (and enable 0) 1)]
-    (read-or-set-register :free-running-pixel-clock enable)))
+  (read-or-set-pregister :free-running-pixel-clock (case enable true 0 false 1 nil)))
 
 (defn output-format-range
   "Read or change the output format range."
@@ -365,7 +369,7 @@ OV7670 register coordinates. Entries are one of:
                 :x01-0xFE 2r10
                 :x00-0xFF 2r11
                 nil)]
-    (read-or-set-register :output-format-range rng)))
+    (read-or-set-pregister :output-format-range rng)))
 
 (defn pll-multiplier
   "Read or adjust the PLL multiplier. Pass a value between 0 and 3 to
@@ -376,19 +380,7 @@ OV7670 register coordinates. Entries are one of:
   2 10: Multiply input clock by 6
   3 11: Multiply input clock by 8"
   [& [level]] 
-  (read-or-set-register :pll-multiplier level))
-
-(defn pll-multiplier
-  "Read or adjust the PLL multiplier. Pass a value between 0 and 3 to
-  change the PLL-Multiplier value:
-
-  0 00: Bypass PLL
-  1 01: Multiply input clock by 4
-  2 10: Multiply input clock by 6
-  3 11: Multiply input clock by 8"
-  [ & [level]]
-  (read-or-set-register :pll-multiplier level))
-
+  (read-or-set-pregister :pll-multiplier level))
 
 (defn pixel-format
   "From section 2 of the implementation guide, the OV7670 has an image
@@ -428,10 +420,8 @@ OV7670 register coordinates. Entries are one of:
   or 0x80 means no brightness adjustment.
 
   Pass a new value to set a new register value."
-  ([] (register "BRIGHT"))
-  ([adj] (let [[addr] (registers "BRIGHT")]
-           (set-register-bits addr adj)
-           (brightness-level))))
+  [& [level]] 
+  (read-or-set-register "BRIGHT" level))
 
 (defn contrast-level
   "Read or adjust the contrast level.  Passing no arguments returns the
@@ -439,28 +429,22 @@ OV7670 register coordinates. Entries are one of:
   higher the contrast.  A value of 0x40 means no contrast adjustment.
 
   Pass a new value to set a new register value."
-  ([] (register "CONTRAS"))
-  ([adj] (let [[addr] (registers "CONTRAS")]
-           (set-register-bits addr adj)
-           (contrast-level))))
+  [& [level]] 
+  (read-or-set-register "CONTRAS" level))
 
 (defn night-mode
   "Read or change the night-mode setting.  Passing no arguments returns
   the current mode, otherwise passing `true` or `false` enables or
   disables night mode."
-  ([] (register :night-mode))
-  ([enable] (let [[[_ addr slice]] (reg->addr-coords :night-mode)]
-            (set-register-bits addr (if enable 1 0) slice)
-            (night-mode))))
+  [& [enable]] 
+  (read-or-set-pregister :night-mode (case enable true 1 false 0 nil)))
 
 (defn sharpness-mode
   "Read or adjust the sharpness mode.  Passing no arguments returns the
   current sharpness mode, otherwise passing `true` or `false` enables
   or disables automatic sharpness mode."
-  ([] (register :sharpness-mode))
-  ([auto] (let [[[_ addr slice]] (reg->addr-coords :sharpness-mode)]
-            (set-register-bits addr (if auto 1 0) slice)
-            (sharpness-mode))))
+  [& [auto]] 
+  (read-or-set-pregister :sharpness-mode (case auto true 1 false 0 nil)))
 
 (defn sharpness-level
   "Read or adjust the sharpness level.  Passing no arguments returns the
@@ -482,10 +466,8 @@ OV7670 register coordinates. Entries are one of:
   "Read or adjust the exposure mode.  Passing no arguments returns the
   current exposure mode, otherwise passing `true` or `false` enables
   or disables automatic exposure control mode."
-  ([] (register :aec-mode))
-  ([auto] (let [[[_ addr slice]] (reg->addr-coords :aec-mode)]
-            (set-register-bits addr (if auto 1 0) slice)
-            (exposure-mode))))
+  [& [auto]] 
+  (read-or-set-pregister :aec-mode (case auto true 1 false 0 nil)))
 
 
 (defn exposure
@@ -521,36 +503,29 @@ OV7670 register coordinates. Entries are one of:
   "There are two exposure algorithms, average based (:avg) and
   histogram (:hist) based. Pass no arguments to read the current value
   or one of :avg or :hist to change it."
-  ([] (let [[_ [alg _]] (register :aec-algorithm)]
-        (case alg 0 :avg 1 :hist)))
-  ([algo]
-   (let [[[_ addr slice]] (reg->addr-coords :aec-algorithm)]
-     (set-register-bits addr (case algo :avg 0 :hist 1 0) slice)
-     (exposure-algorithm))))
+  [& [algo]]
+  (let [[_ [value]] (read-or-set-pregister :aec-algorithm (case algo :avg 0 :hist 1 nil))]
+    (case value
+        0 :avg
+        1 :hist)))
 
 (defn gain-mode
   "Read or set the automatic gain control.  Passing `true` or `false`
   enables or disables automatic gain control."
-  ([] (register :agc-mode))
-  ([auto] (let [[[_ addr slice]] (reg->addr-coords :agc-mode)]
-            (set-register-bits addr (if auto 1 0) slice)
-            (gain-mode))))
+  [& [auto]] 
+  (read-or-set-pregister :agc-mode (case auto true 1 false 0 nil)))
 
 (defn mirror
   "Read or set the horizontal mirroring scan direction.  Passing `true`
   enables horizontal mirroring, `false` disables it"
-  ([] (register :mirror))
-  ([enable] (let [[[_ addr slice]] (reg->addr-coords :mirror)]
-            (set-register-bits addr (if enable 1 0) slice)
-            (mirror))))
+  [& [enable]] 
+  (read-or-set-pregister :mirror (case enable true 1 false 0 nil)))
 
 (defn flip
   "Read or set the vertical flip scan direction control.  Passing `true`
   enables vertical flip, `false` disables it"
-  ([] (register :flip))
-  ([enable] (let [[[_ addr slice]] (reg->addr-coords :flip)]
-            (set-register-bits addr (if enable 1 0) slice)
-            (flip))))
+  [& [enable]] 
+  (read-or-set-pregister :flip (case enable true 1 false 0 nil)))
 
 (defn gain-ceiling
   "Read or set the upper limit of gain value used within automatic gain
@@ -564,18 +539,19 @@ OV7670 register coordinates. Entries are one of:
   101: 64x
   110: 128x
   111: 128x"
-  ([] (register :gain-ceiling))
-  ([level] (let [[[_ addr slice]] (reg->addr-coords :gain-ceiling)
-                 level (condp <= level
-                         128 2r111
-                         64  2r110
-                         32  2r100
-                         16  2r011
-                         8   2r010
-                         4   2r001
-                         2r000)]
-            (set-register-bits addr level slice)
-            (gain-ceiling))))
+  [& [level]]
+  (let [levels [128 2r111
+                64  2r110
+                32  2r100
+                16  2r011
+                8   2r010
+                4   2r001
+                0   2r000]
+        slevel (->> (partition 2 levels) (map reverse) flatten)
+        [_ [value _]] (if (nil? level) 
+                  (read-or-set-pregister :gain-ceiling)
+                  (read-or-set-pregister :gain-ceiling (eval `(condp <= ~level ~@levels 2r000))))]
+    (eval `(case ~value ~@slevel))))
 
 (defn gain
   "Read or set the automatic gain control.  Passing a `level` amount
@@ -593,10 +569,8 @@ OV7670 register coordinates. Entries are one of:
   "Read or enable/disable the automatic de-noise function.  Passing
   `true` or `false` enables or disables the function.  When enabled,
   the computed noise threshold is stored in DNSTH[7:0]."
-  ([] (register :de-noise-mode))
-  ([auto] (let [[[_ addr slice]] (reg->addr-coords :de-noise-mode)]
-            (set-register-bits addr (if auto 1 0) slice)
-            (de-noise-mode))))
+  [& [enable]] 
+  (read-or-set-pregister :de-noise-mode (case enable true 1 false 0 nil)))
 
 (defn de-noise
   "Read the current de-noise threshold and offset values.  Passing a new
@@ -637,11 +611,8 @@ OV7670 register coordinates. Entries are one of:
   or `false` to disable the banding filter.  When the filter is
   disabled, then exposure time can be any value.  When it's enabled,
   it must be N/100 (50hz) or N/120 (60hz)."
-
-  ([] (register :banding-filter-mode))
-  ([enable] (let [[[_ addr slice]] (reg->addr-coords :banding-filter-mode)]
-            (set-register-bits addr (if enable 1 0) slice)
-            (banding-filter-mode))))
+  [& [enable]] 
+  (read-or-set-pregister :banding-filter-mode (case enable true 1 false 0 nil)))
 
 (defn banding-exposure-limit
   "Read or change the banding-exposure-limit setting.  This changes the
@@ -652,11 +623,8 @@ OV7670 register coordinates. Entries are one of:
   the banding filter is enabled.  When the limit is enabled, it will
   allow exposure times of less than 1/100 or 1/120 second in strong
   light conditions"
-
-  ([] (register :banding-exposure-limit))
-  ([enable] (let [[[_ addr slice]] (reg->addr-coords :banding-exposure-limit)]
-            (set-register-bits addr (if enable 1 0) slice)
-            (banding-exposure-limit))))
+  [& [enable]] 
+  (read-or-set-pregister :banding-exposure-limit (case enable true 1 false 0 nil)))
 
 (defn banding-filter
   "Read or change the banding-filter settings.
