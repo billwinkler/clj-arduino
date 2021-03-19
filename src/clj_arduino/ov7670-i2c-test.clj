@@ -25,8 +25,6 @@
                             (str "r") keyword) itm)))
        (reduce into)))
 
-(type *registers*)
-
 (def ^:dynamic *registers* (read-registers))
 
 (defn pixel-format
