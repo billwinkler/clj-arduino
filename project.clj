@@ -6,8 +6,6 @@
   :dependencies [[org.clojure/clojure "1.10.1"]
                  ;; [clodiuno "0.0.4-SNAPSHOT"]
                  [com.github.billwinkler/clodiuno "0.0.4-with-port-id-fix"]
-                 [org.clojure/core.async "1.3.610"]
-;;                 [net.mikera/mikera-gui "0.3.1"]
-                 ]
+                 [org.clojure/core.async "1.3.610"]]
   :repl-options {:init-ns clj-arduino.core}
   :repositories [["jitpack" "https://jitpack.io"]])
