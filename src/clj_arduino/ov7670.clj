@@ -3,14 +3,12 @@
   (:use clodiuno.core)
   (:use clodiuno.firmata)
   (:require [clojure.pprint :refer [cl-format]]
-            [clojure.core.async
-             :as a
-             :refer [>! <! >!! <!! go chan alts!! close! timeout pipeline]]))
+            [clojure.core.async :as a :refer [chan pipeline]]))
 
 ;; http://embeddedprogrammer.blogspot.com/2012/07/hacking-ov7670-camera-module-sccb-cheat.html
 
 (def i2c-address 0x21)
-(def OV7670-COMMAND  0x40) ;; just testing
+(def OV7670-COMMAND  0x40) ;; Extending SYSEX with 0x40 command
 
 (def parameters (atom {:debug #{:printer}}))
 ;; 160x120x2 frame (QQVGA)
@@ -94,6 +92,9 @@ OV7670 register coordinates. Entries are one of:
            (mapcat (fn [b] [(lsb b) (msb b)])
                    data))))
 
+(defn- ->bits [i]
+  "zero padded bit string"
+  (cl-format nil "~8,'0b" i))
 
 (defn as-hex-array
   "Format the returned message values as hex values for display purposes."
@@ -250,10 +251,6 @@ OV7670 register coordinates. Entries are one of:
        (constantly
         (arduino :firmata (arduino-port) :baudrate 115200 :msg-callback msg-handler)))
       firmware))
-
-(defn- ->bits [i]
-  "zero padded bit string"
-  (cl-format nil "~8,'0b" i))
 
 (defn read-register
   "get the OV7670 register value for register at a given address"
