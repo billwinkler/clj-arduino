@@ -1,6 +1,6 @@
 # clj-arduino
 
-An Ardunio prototyping library. 
+An Arduino prototyping library. 
 
 
 To install, add the following to your `project.clj`.
