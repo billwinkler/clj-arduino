@@ -11,7 +11,7 @@ To install, add the following to your `project.clj`.
 
 ## Usage
 
-See `resources/examples`, [OV7670](doc/ov7670.md), [HX711](doc/hx711.md) docs and corresponding [scale](resources/examples/scale.clj) examples.
+See `resources/examples`, [OV7670](doc/OV7670.md), [HX711](doc/hx711.md) docs and corresponding [scale](resources/examples/scale.clj) examples.
 
 ## Credits
 
