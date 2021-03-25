@@ -6,12 +6,12 @@ An Ardunio prototyping library.
 To install, add the following to your `project.clj`.
 
 ``` clojure
-[clj-arduino "0.1.3-SNAPSHOT"]
+[clj-arduino "0.1.4-SNAPSHOT"]
 ```
 
 ## Usage
 
-See `resources/examples`, [HX711](doc/hx711.md) docs and corresponding [scale](resources/examples/scale.clj) example.
+See `resources/examples`, [OV7670](doc/ov7670.md), [HX711](doc/hx711.md) docs and corresponding [scale](resources/examples/scale.clj) examples.
 
 ## Credits
 
